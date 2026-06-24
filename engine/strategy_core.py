@@ -9,6 +9,11 @@
 回测适配器: app/signals/__init__.py → 调用 detect_signals (包装为 crtSG)
 实盘适配器:  trader/paper_trader.py  → 调用 detect_signals (实时行情驱动)
 
+参数来源:
+  手写基线: chen-xiaoqun-final-signal-design.md (17次搜索交叉验证)
+  数据驱动: engine/threshold_optimizer.py 网格搜索 → config/optimal_thresholds.json
+  优先级:   params参数 > optimal_thresholds.json > 手写基线
+
 来源:
   P1 app/factors   — 因子定义
   P2 app/signals   — 信号检测
@@ -19,7 +24,9 @@
 北极星: ¥5000 → ¥100万, 所有参数必须可配置、可回测、可自调整
 """
 
+import json
 import math
+import os
 
 
 # ═══════════════════════════════════════════════════════════
@@ -49,20 +56,41 @@ def count_boards(closes, idx):
     return board
 
 
+def load_optimal_thresholds():
+    """加载数据驱动的最优阈值。若无则返回手写基线。
+
+    优先级: optimal_thresholds.json > 手写基线 (来源: 17次搜索交叉验证)
+    """
+    config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config')
+    path = os.path.join(config_dir, 'optimal_thresholds.json')
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    # 手写基线 (来源: chen-xiaoqun-final-signal-design.md)
+    return {
+        'gap_min': 2.0, 'gap_max': 5.0, 'vol_ratio': 3.0,
+        'daily_ret': 5.0, 'turnover_min': 0.10, 'turnover_max': 0.30,
+        'gap_fanbao': 3.0, 'vol_ratio_lianban': 0.67,
+    }
+
+
 def detect_signals(kdata_records, params=None):
     """陈小群模式识别 — 纯函数实现。
 
     Args:
         kdata_records: K线记录列表, 每项 (datetime, open, high, low, close, volume)
-        params: 信号参数 dict, 默认使用基线值
+        params: 信号参数 dict, None=自动加载最优阈值
 
     Returns:
         [(datetime, signal_type, score), ...]
 
-    来源: chen-xiaoqun-final-signal-design.md
+    来源: 手写基线 → engine/threshold_optimizer.py 数据驱动优化
     """
-    if params is None:
-        params = {}
+    if params is None or not params:
+        params = load_optimal_thresholds()
     gap_min = params.get('gap_min', 2.0)
     gap_max = params.get('gap_max', 5.0)
     vol_ratio_min = params.get('vol_ratio', 3.0)

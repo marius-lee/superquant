@@ -104,13 +104,32 @@ def run_research():
     print(f"  权重: {weights}")
 
     # ── 3. 信号参数网格搜索 ──
-    print("\n[3/4] 信号参数搜索 (采样模式)")
-    # 完整网格搜索需要全量回测, 太耗资源
-    # 当前: 抽样检查信号触发频率
-    sg_sample = {'弱转强': 0, '首阴反包': 0, '连板接力': 0, '首板试探': 0}
-    param_updates = {}
-    print(f"  信号触发频率: {sg_sample}")
-    print(f"  参数调整: 无 (下周完整搜索)")
+    print("\n[3/4] 信号参数优化 (方案A: 数据驱动阈值)")
+    try:
+        from engine.threshold_optimizer import fetch_events, grid_search, DB_PATH as T_DB
+        import sqlite3 as _sql
+        conn = _sql.connect(T_DB)
+        # 采样模式: 随机500只股票
+        syms = [r[0] for r in conn.execute(
+            "SELECT DISTINCT symbol FROM daily ORDER BY RANDOM() LIMIT 500"
+        ).fetchall()]
+        events = fetch_events(conn, syms)
+        conn.close()
+        if len(events) > 100:
+            best = grid_search(events)
+            if best:
+                param_updates = best
+                print(f"  最优: gap_min={best['gap_min']}, vol_ratio={best['vol_ratio']}, daily_ret={best['daily_ret']}")
+                print(f"  胜率={best['win_rate']*100:.0f}%, 样本={best['n_samples']}")
+            else:
+                param_updates = {}
+                print(f"  样本不足, 保持手写参数")
+        else:
+            param_updates = {}
+            print(f"  事件不足 ({len(events)}), 保持手写参数")
+    except Exception as e:
+        param_updates = {}
+        print(f"  [warn] 阈值优化失败: {e}")
 
     # ── 4. Kelly参数更新 ──
     print("\n[4/4] Kelly参数更新")
