@@ -100,3 +100,61 @@
 2. 最佳组合: Ashare(数据) + daban(打板执行) 或 xman(高频抢板)
 3. king-pin 架构最完整 (数据→处理→决策→执行→风控)
 4. 不存在免费+完整的"一键打板赚钱"系统, 需要自行组合
+
+## Round 5: 更激进的系统 + 完整打板系统 (2026-06-24)
+
+### 新发现 (之前未收录)
+| 系统 | 语言 | 特点 | 链接 |
+|------|------|------|------|
+| **TradingAgents-astock** | Python | 7 AI分析师, 含游资追踪师, 龙虎榜/解禁/政策专项, 免费数据源 | github.com/simonlin1212/TradingAgents-astock |
+| **easytrader** | Python | 同花顺/国金/华泰自动交易, 均线/打板/打新 | github.com/huadi/easytrader |
+| **STIP** | Python/Streamlit | 交互式技术指标回测, K线形态识别, 多条件组合 | github.com/cn-vhql/STIP |
+| **QTYX** | Python | 涨停板选股+题材+形态, miniQMT实盘 | CSDN |
+| **JoinQuant打板** | Python | 一进二+首板低开+弱转强, 5年950x | joinquant.com |
+
+### 新增克隆 (手动下载)
+```
+git clone --depth 1 https://github.com/simonlin1212/TradingAgents-astock.git
+git clone --depth 1 https://github.com/huadi/easytrader.git
+git clone --depth 1 https://github.com/cn-vhql/STIP.git
+```
+
+## Round 6: 极深搜索 (2026-06-24)
+
+### 新发现
+| 系统 | 类型 | 亮点 |
+|------|------|------|
+| **QMT-QuantLimit** | Python | miniQMT实盘打板 + Kimi/阶跃星辰大模型AI选股 + 韭研公社舆情 |
+| **QTYX V3.1.9** | Python | 涨停数据库 + 热门题材跟踪 + DeepSeek题材分析 + 形态选股 |
+| **龙系选股系统** | Python/Flask/Vue3 | 龙头战法三层门控评分 + 10项指标 + 情景计划 |
+| **gitee: yeapllg** | Python | AI量化打板软件, 专为A股设计 |
+| **百果量化** | 策略 | 突破上升打板 + 集合竞价打三板 (策略思路+源码) |
+
+### 系统总览 (6轮搜索, 60+来源)
+现已覆盖:
+  打板执行: daban, xman, QMT-QuantLimit, easytrader
+  架构参考: king-pin, QTYX, 龙系选股
+  AI智能: TradingAgents-astock, aiagents-stock, longhubang-stock
+  短线选股: ZGNB, StockTradebyZ, InStock
+  数据: Ashare, easy-tdx, AData, AKShare
+
+## Round 7: 极限搜索 (2026-06-24)
+
+### 新发现
+| 系统 | 类型 | 关键 |
+|------|------|------|
+| **QMT-QuantLimit** | Python | 完整打板系统, QMT实盘, Kimi/阶跃AI选股, 源代码完整 |
+| **KuaiT** | C++ | 同花顺自动下单HTTP API, OCR验证码识别 |
+| **THSAutoTrader** | Python/Flask | 129⭐同花顺闪电下单, Web API |
+| **BitSoulStockSkill** | Python | 100+因子, MoE选股, 龙虎榜, 完整回测 |
+| **小鸭量化** | Python/PyQt5 | 图形化量化工具, 20+策略内置 |
+| **百果量化** | 策略社区 | PTrade打板: 连板/首板/二板/三板策略代码 |
+| **QMT打板** | 社区 | 打板源码框架: subscribe_quote→涨停检测→封板买入 |
+
+### 累计覆盖 (7轮, 80+来源)
+执行: daban, xman, QMT-QuantLimit, easytrader, THSAutoTrader, KuaiT
+架构: king-pin, QTYX, 龙系选股, 小鸭量化
+AI: TradingAgents-astock, aiagents-stock, longhubang, BitSoulStock
+选股: ZGNB, StockTradebyZ, InStock
+数据: Ashare, easy-tdx, AKShare, AData, Sina, tdx2db
+策略: 百果量化(PTrade), JoinQuant打板, 通达信公式
