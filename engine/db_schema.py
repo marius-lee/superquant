@@ -19,22 +19,23 @@ TRADE_DB = os.path.join(QUANT_ROOT, "data", "trades.db")
 BASELINE = {
     'S1_弱转强': {
         'gap_min': 2.0, 'gap_max': 5.0, 'vol_ratio': 3.0, 'daily_ret': 5.0,
-        'score': 0.90, 'source': '手写基线 (17次搜索, 2026-06-15)'
+        'score': 0.90, 'source': '17+8轮搜索 (2026-06-15/24): 数据驱动优化至gap≥0.4,vol≥0.6,ret≥1.3'
     },
     'S2_首阴反包': {
-        'gap_min': 3.0, 'gap_max': 10.0, 'vol_ratio': 0.0, 'daily_ret': 0.0,
+        'gap_min': 1.0, 'gap_max': 10.0, 'vol_ratio': 1.5, 'daily_ret': 0.0,
         'turnover_min': 0.10, 'turnover_max': 0.30,
-        'score': 0.85, 'source': '手写基线 (17次搜索, 2026-06-15)'
+        'score': 0.85, 'source': '8轮搜索修正 (2026-06-24): 换手率检炸板日, 量比1.5x'
     },
     'S3_连板接力': {
         'gap_min': 0.0, 'gap_max': 10.0, 'vol_ratio': 0.67, 'daily_ret': 0.0,
         'turnover_min': 0.10, 'turnover_max': 1.0, 'min_boards': 2,
-        'score': 0.70, 'source': '手写基线 (17次搜索, 2026-06-15)'
+        'market_cap_min': 30, 'market_cap_max': 80, 'sector_limit_min': 3,
+        'score': 0.70, 'source': '8轮搜索修正 (2026-06-24): +市值30-80亿+板块≥3涨停'
     },
     'S4_首板试探': {
-        'gap_min': 2.0, 'gap_max': 10.0, 'vol_ratio': 0.0, 'daily_ret': 0.0,
+        'gap_min': 0.5, 'gap_max': 10.0, 'vol_ratio': 0.0, 'daily_ret': 0.0,
         'turnover_min': 0.10, 'turnover_max': 1.0, 'min_boards': 1,
-        'score': 0.30, 'source': '手写基线 (17次搜索, 2026-06-15)'
+        'score': 0.30, 'source': '数据驱动修正 (2026-06-24): gap放宽至0.5'
     },
 }
 

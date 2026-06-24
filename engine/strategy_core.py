@@ -120,22 +120,30 @@ def detect_signals(kdata_records, params=None):
             signals.append((dt, '弱转强', 0.90))
             continue
 
-        # S2: 首阴反包 (p2 parameters)
-        if broken and gap >= p2.get('gap_min',3.0) \
-           and turnover >= p2.get('turnover_min',0.10) and turnover <= p2.get('turnover_max',0.30):
+        # S2: 首阴反包 — 修正: 换手率检查炸板日(prev_k), 非信号日
+        # 来源: 8轮搜索 — 换手率10-30%是分歧日的条件, 量比1.5x(非S1的3x)
+        prev_turnover = pvol / 10000.0  # 炸板日换手率 (来源: 8轮搜索修正)
+        if broken and gap >= p2.get('gap_min',1.0) \
+           and prev_turnover >= p2.get('turnover_min',0.10) \
+           and prev_turnover <= p2.get('turnover_max',0.30) \
+           and vol_ratio >= p2.get('vol_ratio',1.5):
             signals.append((dt, '首阴反包', 0.85))
             continue
 
-        # S3: 连板接力 (p3 parameters)
+        # S3: 连板接力 — 修正: 添加市值过滤和板块联动条件
+        # 来源: 8轮搜索 — 龙头需带动≥3家涨停, 流通市值30-80亿
+        # 市值和板块条件在paper_trader层检查 (需实时数据)
         board = count_boards(closes, i)
-        if board >= p3.get('min_boards',2) and turnover >= p3.get('turnover_min',0.10) \
+        if board >= p3.get('min_boards',2) \
+           and turnover >= p3.get('turnover_min',0.10) \
            and vol_ratio >= p3.get('vol_ratio',0.67):
             signals.append((dt, '连板接力', 0.70))
             continue
 
-        # S4: 首板试探 (p4 parameters)
-        if board == p4.get('min_boards',1) and turnover >= p4.get('turnover_min',0.10) \
-           and gap > p4.get('gap_min',2.0):
+        # S4: 首板试探 — gap放宽到0.5 (数据驱动)
+        if board == p4.get('min_boards',1) \
+           and turnover >= p4.get('turnover_min',0.10) \
+           and gap > p4.get('gap_min',0.5):
             signals.append((dt, '首板试探', 0.30))
 
     return signals
@@ -213,14 +221,14 @@ def calc_adaptive_stop(entry_price, daily_returns, params=None):
 
     公式: stop = entry × (1 - adaptive_pct)
           adaptive_pct = base × (stock_down_vol / 0.30)
-          floor: 2%, ceiling: 8%
+          floor: 1.5%, ceiling: 8%
 
-    来源: 因子日历 page 53 — 下行波动率
+    来源: 8轮搜索 — 陈小群止损基线3% (非5%), floor=1.5%防止过紧
     """
     if params is None:
         params = {}
-    base = params.get('adaptive_stop_base', 0.05)
-    floor = params.get('adaptive_stop_floor', 0.02)
+    base = params.get('adaptive_stop_base', 0.03)  # 来源: 8轮搜索 — 陈小群单笔止损3%
+    floor = params.get('adaptive_stop_floor', 0.015)
     ceiling = params.get('adaptive_stop_ceiling', 0.08)
 
     down_rets = [r for r in daily_returns if r < 0]
