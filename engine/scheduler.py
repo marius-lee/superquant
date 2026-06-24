@@ -77,7 +77,8 @@ def post_market():
     """盘后流程: 15:05"""
     errors = 0
     errors += run_step("分钟存储", "data.minute_store", ["--market", "all", "--today"])
-    errors += run_step("因子IC回测", "engine.researcher")
+    errors += run_step("ML 训练", "ml.train")           # 用最新数据重训模型
+    errors += run_step("L3 回补", "ml.build_features", ["--l3", "--start", "0", "--count", "10"])
     errors += run_step("策略调整", "engine.auto_tuner")
     if errors > 0:
         print(f"⚠️ 盘后流程 {errors} 步失败")
@@ -88,8 +89,8 @@ def full_cycle():
     """全流程 (非交易时间可用)"""
     errors = 0
     errors += run_step("日线更新", "scripts.export_daily", ["--market", "all"])
-    errors += run_step("因子计算", "app.factors")
-    errors += run_step("因子IC回测", "engine.researcher")
+    errors += run_step("ML 预测", "ml.predict")
+    errors += run_step("ML 训练", "ml.train")
     errors += run_step("策略调整", "engine.auto_tuner")
     if errors > 0:
         print(f"⚠️ 全流程 {errors} 步失败")

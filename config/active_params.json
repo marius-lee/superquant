@@ -33,7 +33,7 @@
     "note": "默认值 (交易不足20笔, 保持先验)"
   },
   "meta": {
-    "updated_at": "2026-06-24",
+    "updated_at": "2026-06-25",
     "source": "auto_tuned",
     "ic_trend": {}
   }
