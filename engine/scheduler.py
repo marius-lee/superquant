@@ -57,7 +57,7 @@ def pre_market():
     """盘前流程: 8:45"""
     errors = 0
     errors += run_step("日线更新", "scripts.export_daily", ["--market", "all"])
-    errors += run_step("因子计算", "app.factors")
+    errors += run_step("ML 预测", "ml.predict")          # XGBoost → Top20候选
     errors += run_step("参数调整", "engine.auto_tuner")
     if errors > 0:
         print(f"⚠️ 盘前流程 {errors} 步失败")
