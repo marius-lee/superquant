@@ -245,7 +245,9 @@ def get_factor_score(symbol):
 def main():
     parser = argparse.ArgumentParser(description='superquant 模拟交易')
     parser.add_argument('--live', action='store_true', help='持续运行')
-    parser.add_argument('--interval', type=int, default=60, help='扫描间隔(秒)')
+    # 来源: 现有quant系统 intraday_runner.py:853 — 实际跑3-5s
+    # Sina实测: 200只/次, 0.2-0.6s, 连发3次未限流
+    parser.add_argument('--interval', type=int, default=5, help='扫描间隔(秒, 默认5s)')
     ARGS = parser.parse_args()
 
     print("=" * 60)
