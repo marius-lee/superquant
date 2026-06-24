@@ -12,12 +12,15 @@ API:
   /                  — 主页面
 """
 
-import json, os, sqlite3
+import json, os, sys, sqlite3
 from datetime import date, datetime
 from flask import Flask, jsonify, render_template, request
 
 SUPERQUANT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QUANT_ROOT = os.path.expanduser("~/project/quant")
+# Flask子进程需要此路径才能 import app.factors
+sys.path.insert(0, SUPERQUANT_ROOT)
+sys.path.insert(0, QUANT_ROOT)
 TRADE_DB = os.path.join(QUANT_ROOT, "data", "trades.db")
 ACTIVE_PARAMS = os.path.join(SUPERQUANT_ROOT, "config", "active_params.json")
 AUTO_TUNING = os.path.join(SUPERQUANT_ROOT, "config", "auto_tuning.json")

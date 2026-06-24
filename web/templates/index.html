@@ -113,23 +113,27 @@ async function refresh() {
     $('npos').textContent = state.n_positions;
 
     // 北极星
-    $('northstar-pct').textContent = northstar.progress_pct.toFixed(1)+'%';
-    $('northstar-bar').style.width = Math.min(northstar.progress_pct, 100)+'%';
-    $('ns-remaining').textContent = '¥'+Math.round(northstar.remaining).toLocaleString();
+    if (northstar && northstar.progress_pct != null) {
+      $('northstar-pct').textContent = northstar.progress_pct.toFixed(1)+'%';
+      $('northstar-bar').style.width = Math.min(northstar.progress_pct, 100)+'%';
+      $('ns-remaining').textContent = '¥'+Math.round(northstar.remaining||0).toLocaleString();
+    }
 
     // 策略参数
-    if (state.weights && Object.keys(state.weights).length > 0) {
+    if (state && state.weights && Object.keys(state.weights).length > 0) {
       $('weights').textContent = JSON.stringify(state.weights);
     }
-    $('stop-base').textContent = Math.round(state.stop_base*100)+'%';
-    $('kelly-wr').textContent = Math.round(state.kelly_win_rate*100)+'%';
+    if (state) {
+      $('stop-base').textContent = Math.round((state.stop_base||0.05)*100)+'%';
+      $('kelly-wr').textContent = Math.round((state.kelly_win_rate||0.55)*100)+'%';
+    }
 
     // 因子
-    if (factors.top && factors.top.length > 0) {
+    if (factors && factors.top && factors.top.length > 0 && factors.top[0].symbol) {
       let html = '';
       factors.top.slice(0,10).forEach((f,i) => {
-        let cls = f.score > 0.5 ? 'factor-high' : f.score < -0.5 ? 'factor-low' : 'factor-mid';
-        html += `<tr><td>${i+1}. ${f.symbol}</td><td>${f.name}</td><td class="${cls}">${f.score.toFixed(2)}</td></tr>`;
+        let cls = (f.score||0) > 0.5 ? 'factor-high' : (f.score||0) < -0.5 ? 'factor-low' : 'factor-mid';
+        html += '<tr><td>'+(i+1)+'. '+f.symbol+'</td><td>'+(f.name||'?')+'</td><td class="'+cls+'">'+(f.score||0).toFixed(2)+'</td></tr>';
       });
       $('factor-table').innerHTML = html;
     }
