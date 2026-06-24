@@ -19,6 +19,7 @@ sys.path.insert(0, QUANT_ROOT)
 from engine.strategy_core import (
     calc_position_size, calc_adaptive_stop, calc_take_profit, generate_daily_returns,
 )
+from engine.bayesian_changepoint import bayesian_detect
 
 TRADE_DB = os.path.join(QUANT_ROOT, "data", "trades.db")
 ACTIVE_PARAMS = os.path.join(SUPERQUANT_ROOT, "config", "active_params.json")
@@ -142,17 +143,22 @@ def run_scan(conn, capital, positions, tracked, history_cache):
     today_positions = {p['symbol'] for p in positions}
     signals_triggered = []
 
-    # 1) ML 信号检测: 候选池 + 涨幅阈值
+    # 1) ML 信号检测: 候选池 + 贝叶斯变点检测
     for sym, q in quotes.items():
         if q['open'] <= 0 or q['prev_close'] <= 0: continue
         if q['price'] >= q['prev_close'] * 1.095: continue  # 涨停不买
         if q['price'] <= q['prev_close'] * 0.905: continue  # 跌停不卖
 
-        # 涨幅 > 5% 触发买入 (来源: ML候选已筛选, 实时确认上涨动量)
-        daily_ret = (q['price'] / q['prev_close'] - 1) * 100
-        if daily_ret >= 5.0:
+        # 构建价格序列: 最近60个历史价格 + 当前价
+        hist = history_cache.get(sym, [])
+        recent_prices = [h[3] for h in hist[-60:]] + [q['price']]  # h=(o,h,l,c,v), index3=close
+
+        # 贝叶斯变点检测: 价格行为突变 → 拉升启动
+        if bayesian_detect(recent_prices, threshold=3.0):
+            daily_ret = (q['price'] / q['prev_close'] - 1) * 100
             signals_triggered.append({
-                'symbol': sym, 'price': q['price'], 'type': 'ML候选+量能确认',
+                'symbol': sym, 'price': q['price'],
+                'type': f'变点检测(涨{daily_ret:.1f}%)',
                 'signal_score': 1.0, 'factor_score': 1.0,
                 'multiplier': 1.0, 'final_score': 1.0,
             })
