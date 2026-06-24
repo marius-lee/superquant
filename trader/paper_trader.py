@@ -20,13 +20,14 @@ from engine.strategy_core import (
     calc_position_size, calc_adaptive_stop, calc_take_profit, generate_daily_returns,
 )
 from engine.bayesian_changepoint import bayesian_detect
+from engine.config import get_capital, init_capital, save_capital
 
 TRADE_DB = os.path.join(QUANT_ROOT, "data", "trades.db")
 ACTIVE_PARAMS = os.path.join(SUPERQUANT_ROOT, "config", "active_params.json")
 CANDIDATE_FILE = os.path.join(SUPERQUANT_ROOT, "pre_market", "candidate.json")
-INITIAL_CAPITAL = 5000.0
 COMMISSION = 0.0003  # 万三佣金 (来源: 行业标准)
 STAMP_TAX = 0.001    # 千一印花税 (来源: A股税法)
+ML_MIN_PROB = 0.95   # 来源: 模型验证 — Top20概率均>0.98, 取0.95保守
 SINA_URL = "http://hq.sinajs.cn/list="
 ML_MIN_PROB = 0.95   # 来源: 模型验证 — Top20概率均>0.98, 取0.95保守
 
@@ -70,17 +71,11 @@ def fetch_quotes(symbols):
 
 
 def init_account(conn):
-    conn.execute("""CREATE TABLE IF NOT EXISTS paper_account (
-        id INTEGER PRIMARY KEY, date TEXT, cash REAL, equity REAL, updated_at TEXT)""")
-    today = date.today().isoformat()
-    row = conn.execute("SELECT cash FROM paper_account WHERE date=? ORDER BY id DESC LIMIT 1",
-                       (today,)).fetchone()
-    if not row:
-        conn.execute("INSERT INTO paper_account(date, cash, equity, updated_at) VALUES(?,?,?,?)",
-                     (today, INITIAL_CAPITAL, INITIAL_CAPITAL, datetime.now().isoformat()))
-        conn.commit()
-        return INITIAL_CAPITAL
-    return row[0]
+    """从 DB 读取最新资金 (跨天延续, 不重置)。"""
+    cash = get_capital()
+    if cash > 0:
+        return cash
+    return init_capital()  # 首次启动: 写入 ¥5000
 
 
 def record_trade(conn, symbol, side, price, shares, pnl=0, pnl_pct=0, capital_after=0, reason=""):
@@ -240,10 +235,11 @@ def main():
     parser.add_argument('--interval', type=int, default=5, help='扫描间隔(秒, 默认5s)')
     ARGS = parser.parse_args()
 
+    initial_capital = get_capital()
     print("=" * 60)
-    print("superquant 模拟交易 (strategy_core 驱动)")
+    print("superquant 模拟交易 (ML驱动)")
     print(f"  启动: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"  初始资金: ¥{INITIAL_CAPITAL:,.0f}")
+    print(f"  当前资金: ¥{initial_capital:,.0f}")
     print("=" * 60)
 
     conn = sqlite3.connect(TRADE_DB)
@@ -277,7 +273,12 @@ def main():
     liquidation_discount = 1.0 - (COMMISSION + STAMP_TAX + 0.0087)
     equity = capital + sum(p['shares'] * p['price'] * liquidation_discount for p in positions)
     print(f"\n  资金=¥{capital:.0f}, 持仓={len(positions)}, 权益=¥{equity:.0f}")
-    print(f"  累计收益: {(equity/INITIAL_CAPITAL-1)*100:+.1f}%")
+    print(f"  累计收益: {(equity/initial_capital-1)*100:+.1f}%")
+
+    # 持久化: 保存资金到 DB (跨天延续)
+    save_capital(capital, equity)
+    print("  资金已保存 → paper_account")
+
     conn.close()
     print("✅ 模拟交易结束")
     return 0

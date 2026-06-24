@@ -20,10 +20,11 @@ QUANT_ROOT = os.path.expanduser("~/project/quant")
 sys.path.insert(0, SUPERQUANT_ROOT)
 sys.path.insert(0, QUANT_ROOT)
 
+from engine.config import get_capital, init_capital
+
 TRADE_DB = os.path.join(QUANT_ROOT, "data", "trades.db")
 CANDIDATE_FILE = os.path.join(SUPERQUANT_ROOT, "pre_market", "candidate.json")
 ACTIVE_PARAMS = os.path.join(SUPERQUANT_ROOT, "config", "active_params.json")
-INITIAL_CAPITAL = 5000.0
 
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
@@ -48,7 +49,7 @@ def _get_account():
             return {'cash': row[0], 'equity': row[1], 'date': row[2]}
     except Exception:
         pass
-    return {'cash': INITIAL_CAPITAL, 'equity': INITIAL_CAPITAL, 'date': date.today().isoformat()}
+    return {'cash': get_capital(), 'equity': get_capital(), 'date': date.today().isoformat()}
 
 
 def _get_positions():
@@ -153,7 +154,7 @@ def api_state():
         'date': account['date'],
         'n_positions': len(positions),
         'n_signals': len(trades),
-        'initial_capital': INITIAL_CAPITAL,
+        'initial_capital': get_capital(),
         'ml_candidates': len(cands.get('candidates', [])),
         'ml_date': cands.get('date', ''),
     })
@@ -177,14 +178,14 @@ def api_paper_account():
 @app.route('/api/northstar')
 def api_northstar():
     account = _get_account()
-    progress = (account['equity'] / INITIAL_CAPITAL - 1) * 100
+    progress = (account['equity'] / get_capital() - 1) * 100
     target = 1_000_000
     remaining = target - account['equity']
     days = 1
     daily_rate = progress / max(days, 1)
     est_days = int(remaining / max(account['equity'] * daily_rate / 100, 0.001))
     return jsonify({
-        'initial': INITIAL_CAPITAL,
+        'initial': get_capital(),
         'current': account['equity'],
         'target': target,
         'progress_pct': round(progress, 2),
@@ -209,6 +210,6 @@ if __name__ == '__main__':
     print("=" * 50)
     print("superquant Web — 攻击性涨停捕捉")
     print(f"  地址: http://localhost:8522")
-    print(f"  初始资金: ¥{INITIAL_CAPITAL:,.0f}")
+    print(f"  初始资金: ¥{get_capital():,.0f}")
     print("=" * 50)
     app.run(host='0.0.0.0', port=8522, debug=True)
