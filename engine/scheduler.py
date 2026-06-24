@@ -34,7 +34,13 @@ def run_step(name, module, args=None):
     """运行一个步骤, 打印耗时。"""
     t0 = time.time()
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {name}...")
-    cmd = [PYTHON, '-m', module] if '.' in module else [PYTHON, module]
+    # 直接脚本执行 (避免 python -m 的 __main__ 问题)
+    path = os.path.join(SUPERQUANT_ROOT, module.replace('.', os.sep))
+    if os.path.isdir(path):
+        script = os.path.join(path, '__init__.py')
+    else:
+        script = path + '.py'
+    cmd = [PYTHON, script]
     if args:
         cmd.extend(args)
     result = subprocess.run(cmd, cwd=SUPERQUANT_ROOT, env={**os.environ, **ENV},

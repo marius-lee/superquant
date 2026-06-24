@@ -1,0 +1,49 @@
+{
+  "date": "2026-06-24",
+  "ic": {
+    "downside_vol": {
+      "description": "下行波动率",
+      "direction": 1,
+      "n_stocks": 5483,
+      "compute_time": 3.4063031673431396
+    },
+    "overnight_gap": {
+      "description": "隔夜跳空",
+      "direction": -1,
+      "n_stocks": 5478,
+      "compute_time": 0.4175412654876709
+    },
+    "amihud": {
+      "description": "Amihud",
+      "direction": -1,
+      "n_stocks": 5478,
+      "compute_time": 0.5780057907104492
+    },
+    "skewness": {
+      "description": "偏度",
+      "direction": -1,
+      "n_stocks": 5478,
+      "compute_time": 0.33694911003112793
+    }
+  },
+  "weights": {
+    "downside_vol": 0.25,
+    "overnight_gap": 0.25,
+    "amihud": 0.25,
+    "skewness": 0.25,
+    "note": "等权 (IC数据不足20日, 保持默认)"
+  },
+  "signals": {
+    "弱转强": 0,
+    "首阴反包": 0,
+    "连板接力": 0,
+    "首板试探": 0
+  },
+  "signal_params": {},
+  "kelly": {
+    "win_rate": 0.55,
+    "avg_win_loss": 2.0,
+    "note": "默认值 (交易不足20笔, 保持先验)"
+  },
+  "n_stocks": 5525
+}

@@ -1,0 +1,40 @@
+{
+  "factor_weights": {
+    "downside_vol": 0.25,
+    "overnight_gap": 0.25,
+    "amihud": 0.25,
+    "skewness": 0.25
+  },
+  "signal": {
+    "weak_to_strong": {
+      "gap_min": 2.0,
+      "gap_max": 5.0,
+      "vol_ratio": 3.0
+    },
+    "first_yin_fanbao": {
+      "gap_min": 3.0,
+      "turnover_min": 0.1,
+      "turnover_max": 0.3
+    },
+    "lianban": {
+      "min_boards": 2,
+      "turnover_min": 0.1,
+      "vol_ratio_min": 0.67
+    }
+  },
+  "stops": {
+    "adaptive_stop_base": 0.05,
+    "adaptive_stop_floor": 0.02,
+    "adaptive_stop_ceiling": 0.08
+  },
+  "kelly": {
+    "win_rate": 0.55,
+    "avg_win_loss": 2.0,
+    "note": "默认值 (交易不足20笔, 保持先验)"
+  },
+  "meta": {
+    "updated_at": "2026-06-24",
+    "source": "auto_tuned",
+    "ic_trend": {}
+  }
+}
