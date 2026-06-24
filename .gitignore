@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.env
+.hikyuu/
+*.db
+*.db-shm
+*.db-wal
+*.h5
