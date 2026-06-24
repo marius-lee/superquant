@@ -20,8 +20,54 @@ DB_PATH = os.path.join(QUANT_ROOT, "data", "market.db")
 TARGET_RETURN = 0.03; FORWARD_DAYS = 3; MIN_SAMPLE = 20
 
 def fetch_events(conn, symbols):
-    """Per-stock query: 逐只查询, 内存友好, 500只~52s。"""
-    print(f"  扫描 {len(symbols)} 只股票日线...")
+    """全量扫描: 单次SQL查询, Python分组处理。"""
+    print(f"  读取全量日线 ({len(symbols)}只)...")
+    t0 = time.time()
+    rows = conn.execute(
+        "SELECT symbol, open, high, low, close, volume FROM daily ORDER BY symbol, date"
+    ).fetchall()
+    t1 = time.time()
+    print(f"  读取: {len(rows)}行 ({len(rows)/1e6:.1f}M), {t1-t0:.0f}s")
+
+    broken = []; boards = []; single_boards = []
+    prev_sym = None; buffer = []
+    n_processed = 0
+
+    for r in rows:
+        sym = r[0]; vals = r[1:]
+        if sym != prev_sym:
+            if prev_sym is not None and len(buffer) >= 8:
+                for j in range(2, len(buffer) - FORWARD_DAYS):
+                    p = buffer[j-1]; c = buffer[j]
+                    if p[3] <= 0 or c[0] <= 0: continue
+                    gap = (c[0]/p[3]-1)*100; vr = c[4]/max(p[4], 1)
+                    dr = (c[3]/p[3]-1)*100; to = c[4]/10000.0
+                    fwd_high = max(r[2] for r in buffer[j:j+FORWARD_DAYS])
+                    lb = 1 if (fwd_high/c[3]-1) >= TARGET_RETURN else 0
+                    limit_px = round(p[0]*1.10, 2)
+                    if p[1] >= limit_px*0.995 and p[3] < p[1]*0.995:
+                        broken.append((gap, vr, dr, to, lb))
+                    closes = [r[3] for r in buffer[:j+1]]; nb = 1
+                    for k in range(len(closes)-1, 0, -1):
+                        if closes[k-1] > 0 and (closes[k]/closes[k-1]-1) >= 0.095: nb += 1
+                        else: break
+                    if nb >= 2: boards.append((nb, vr, to, gap, lb))
+                    elif nb == 1 and to >= 0.10: single_boards.append((vr, to, gap, lb))
+            buffer = [vals]; prev_sym = sym; n_processed += 1
+            if n_processed % 1000 == 0:
+                elapsed = time.time() - t0
+                print(f"    {n_processed}只 (炸板{len(broken)}) {elapsed:.0f}s")
+        else:
+            buffer.append(vals)
+
+    elapsed = time.time() - t0
+    print(f"  完成: 炸板{len(broken)}件, 连板{len(boards)}件, 首板{len(single_boards)}件, {elapsed:.0f}s")
+    return {'broken': broken, 'boards': boards, 'single': single_boards}
+
+
+def fetch_events_per_stock(conn, symbols):
+    """逐只查询 — 对全量股票更稳定 (5532只 ~5-10min)。"""
+    print(f"  扫描 {len(symbols)} 只股票 (逐只查询)...")
     t0 = time.time()
     broken = []; boards = []; single_boards = []
     for i, sym in enumerate(symbols):
@@ -48,7 +94,26 @@ def fetch_events(conn, symbols):
             elif nb == 1 and to >= 0.10: single_boards.append((vr, to, gap, lb))
         if (i+1) % 500 == 0:
             elapsed = time.time() - t0
-            print(f"    {i+1}/{len(symbols)} (炸板{len(broken)}/连板{len(boards)}/首板{len(single_boards)}) {elapsed:.0f}s")
+            print(f"    {i+1}/{len(symbols)} ({len(broken)}炸/{len(boards)}连/{len(single_boards)}首) {elapsed:.0f}s")
+    elapsed = time.time() - t0
+    print(f"  完成: 炸板{len(broken)}件, 连板{len(boards)}件, 首板{len(single_boards)}件, {elapsed:.0f}s")
+    return {'broken': broken, 'boards': boards, 'single': single_boards}
+
+
+def _finish_buffer(buffer):
+    """处理最后一只股票的缓冲区。"""
+    if len(buffer) >= 8:
+        for j in range(2, len(buffer) - FORWARD_DAYS):
+            p = buffer[j-1]; c = buffer[j]
+            if p[3] <= 0 or c[0] <= 0: continue
+            gap = (c[0]/p[3]-1)*100; vr = c[4]/max(p[4], 1)
+            dr = (c[3]/p[3]-1)*100; to = c[4]/10000.0
+            fwd_high = max(r[2] for r in buffer[j:j+FORWARD_DAYS])
+            lb = 1 if (fwd_high/c[3]-1) >= TARGET_RETURN else 0
+            limit_px = round(p[0]*1.10, 2)
+            if p[1] >= limit_px*0.995 and p[3] < p[1]*0.995:
+                broken.append((gap, vr, dr, to, lb))
+
     elapsed = time.time() - t0
     print(f"  完成: 炸板{len(broken)}件, 连板{len(boards)}件, 首板{len(single_boards)}件, {elapsed:.0f}s")
     return {'broken': broken, 'boards': boards, 'single': single_boards}
@@ -256,35 +321,24 @@ def main():
     p.add_argument('--full', action='store_true', help='全量扫描 (较慢)')
     ARGS = p.parse_args()
 
-    N = 300  # 来源: 收敛测试 — 100只 vs 5532只全量, gap差0.1, vol和ret一致
-    # 100只(~2s): gap=0.5, vol=0.6, ret=1.3
-    # 5532只(~38s): gap=0.4, vol=0.6, ret=1.3
-    # → N=300 偏差<0.1, ~31s — 来源: 实测数据, 非随手设定
-
     conn = sqlite3.connect(DB_PATH)
     all_syms = [r[0] for r in conn.execute(
         "SELECT DISTINCT symbol FROM daily ORDER BY symbol"
     ).fetchall()]
     random.seed(42)
 
-    if ARGS.full:
-        syms = all_syms
-        print("=" * 60)
-        print(f"全模式阈值优化 (全量: {len(syms)}只, 16M行日线)")
-        print("=" * 60)
-    elif ARGS.dry_run:
+    if ARGS.dry_run:
         syms = random.sample(all_syms, 100)
         print("=" * 60)
         print(f"全模式阈值优化 (快速测试: {len(syms)}只)")
         print("=" * 60)
     else:
-        syms = random.sample(all_syms, min(N, len(all_syms)))
+        syms = all_syms  # 全量: 5532只, 16M行日线
         print("=" * 60)
-        print(f"全模式阈值优化 (采样: {len(syms)}只, 收敛验证: N≥1000偏差<0.1)")
-        print(f"来源: 100→5532收敛测试 — gap差0.1, vol/ret一致")
+        print(f"全模式阈值优化 (全量: {len(syms)}只, 16M行日线)")
         print("=" * 60)
 
-    events = fetch_events(conn, syms)
+    events = fetch_events_per_stock(conn, syms)
     conn.close()
 
     s1 = optimize_s1(events['broken'])
