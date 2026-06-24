@@ -228,9 +228,20 @@ def calc_adaptive_stop(entry_price, daily_returns, params=None):
     """
     if params is None:
         params = {}
-    base = params.get('adaptive_stop_base', 0.05)     # 来源: 默认5%, 与auto_tuner一致
-    floor = params.get('adaptive_stop_floor', 0.02)   # 来源: 防止低波股票止损过紧
+    # 优先从 DB 读取优化值, 回退到 auto_tuner 默认值
+    base = params.get('adaptive_stop_base', 0.05)
+    floor = params.get('adaptive_stop_floor', 0.02)
     ceiling = params.get('adaptive_stop_ceiling', 0.08)
+    # 尝试覆盖为 data_driven 优化值
+    try:
+        from engine.db_schema import load_params
+        opt = load_params('stop_params', 'data_driven')
+        if opt:
+            base = opt.get('base', base)
+            floor = opt.get('floor', floor)
+            ceiling = opt.get('ceiling', ceiling)
+    except Exception:
+        pass
 
     down_rets = [r for r in daily_returns if r < 0]
     if len(down_rets) < 5:
