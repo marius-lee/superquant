@@ -221,14 +221,15 @@ def calc_adaptive_stop(entry_price, daily_returns, params=None):
 
     公式: stop = entry × (1 - adaptive_pct)
           adaptive_pct = base × (stock_down_vol / 0.30)
-          floor: 1.5%, ceiling: 8%
+          floor: 2%, ceiling: 8%
 
-    来源: 8轮搜索 — 陈小群止损基线3% (非5%), floor=1.5%防止过紧
+    来源: ops/performance.py — A股残差波动率年化30%中位 (Grinold 表3-1)
+          陈小群固定止损3-5%是另一套机制, 不适用于自适应公式
     """
     if params is None:
         params = {}
-    base = params.get('adaptive_stop_base', 0.03)  # 来源: 8轮搜索 — 陈小群单笔止损3%
-    floor = params.get('adaptive_stop_floor', 0.015)
+    base = params.get('adaptive_stop_base', 0.05)     # 来源: 默认5%, 与auto_tuner一致
+    floor = params.get('adaptive_stop_floor', 0.02)   # 来源: 防止低波股票止损过紧
     ceiling = params.get('adaptive_stop_ceiling', 0.08)
 
     down_rets = [r for r in daily_returns if r < 0]

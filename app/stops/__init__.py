@@ -27,7 +27,7 @@ def create_vol_adaptive_stop():
     def st_get_price(self, datetime, price):
         return price * (1 - self.get_param('stop_pct'))
 
-    st = crtST(st_get_price, params={'stop_pct': 0.03},
+    st = crtST(st_get_price, params={'stop_pct': 0.05},
                name='VolAdaptiveStop', calculate=st_calculate)
     global _st_ref
     _st_ref = st
