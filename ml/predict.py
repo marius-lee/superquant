@@ -93,25 +93,47 @@ if os.path.exists(if_path):
     if_raw = -if_model.score_samples(X)
     if_probs = (if_raw - if_raw.min()) / (if_raw.max() - if_raw.min() + 1e-10)  # 0=正常, 1=极异常
 
-# 组合: XGBoost × IF。一只股票要 "高概率涨停" AND "异常"
-combined = probs * (0.5 + 0.5 * if_probs)  # IF权重50%
-results = sorted(zip(symbols, probs, if_probs, combined), key=lambda x: -x[3])
-print(f"  预测: {len(results)}只 (XGBoost+IF), {time.time()-t0:.0f}s")
+# 组合1: XGBoost × IF → 已知模式 (主力通道)
+combined = probs * (0.5 + 0.5 * if_probs)
+main_results = sorted(zip(symbols, probs, if_probs, combined), key=lambda x: -x[3])
+
+# 组合2: IF ↑ + XGBoost ↓ → 探索通道 (新涨停模式)
+# 条件: IF>0.85(高度异常) AND XGBoost<0.5(模型不认为会涨停)
+disc_raw = [(s, x, i, i * 0.7) for s, x, i, _ in zip(symbols, probs, if_probs, combined) if i > 0.85 and x < 0.5]
+disc_results = sorted(disc_raw, key=lambda x: -x[3])[:TOP_N]
+
+print(f"  预测: {len(main_results)}只 (主力) + {len(disc_raw)}只 (探索), {time.time()-t0:.0f}s")
 
 # ── 6. 输出 ──
-print(f"\n🎯 今日涨停候选 Top {TOP_N} (XGBoost × 孤立森林):")
+print(f"\n🎯 主力候选 Top {TOP_N} (XGBoost × IF):")
 print(f"{'排名':<5} {'股票':<10} {'名称':<10} {'XGBoost':>8} {'异常度':>8} {'综合':>8} {'昨收':>8}")
 conn = sqlite3.connect(DB_PATH)
-for i, (sym, xgb_prob, if_prob, combined) in enumerate(results[:TOP_N], 1):
+main_syms = []
+for i, (sym, xgb_prob, if_prob, combined) in enumerate(main_results[:TOP_N], 1):
     row = conn.execute("SELECT name,close FROM stocks s JOIN daily d ON s.symbol=d.symbol WHERE d.symbol=? ORDER BY d.date DESC LIMIT 1",(sym,)).fetchone()
     name = row[0] if row else '?'
     px = row[1] if row else 0
+    main_syms.append(sym)
     print(f"{i:<5} {sym:<10} {name:<10} {xgb_prob:>8.4f} {if_prob:>8.4f} {combined:>8.4f} {px:>8.2f}")
+
+disc_syms = []
+if disc_results:
+    print(f"\n🔍 探索候选 Top {len(disc_results)} (IF高分+ML低分 → 潜在新模式):")
+    print(f"{'排名':<5} {'股票':<10} {'名称':<10} {'XGBoost':>8} {'异常度':>8} {'综合':>8}")
+    for i, (sym, xgb_prob, if_prob, combined) in enumerate(disc_results, 1):
+        row = conn.execute("SELECT name FROM stocks WHERE symbol=?", (sym,)).fetchone()
+        name = row[0] if row else '?'
+        disc_syms.append(sym)
+        print(f"{i:<5} {sym:<10} {name:<10} {xgb_prob:>8.4f} {if_prob:>8.4f} {combined:>8.4f}")
 conn.close()
 
-# 保存候选
+# 保存候选 (双通道)
 os.makedirs(os.path.dirname(CANDIDATE_FILE), exist_ok=True)
-candidates = [{'symbol': s, 'prob': round(float(c), 4), 'name': ''} for s, _, _, c in results[:TOP_N]]
+candidates = {
+    'date': today,
+    'main': [{'symbol': s, 'prob': round(float(c), 4)} for s, _, _, c in main_results[:TOP_N]],
+    'discovery': [{'symbol': s, 'prob': round(float(c), 4)} for s, _, _, c in disc_results],
+}
 with open(CANDIDATE_FILE, 'w') as f:
     json.dump({'date': today, 'candidates': candidates}, f, indent=2, ensure_ascii=False)
 print(f"\n✅ 候选保存: {CANDIDATE_FILE} ({len(candidates)}只)")

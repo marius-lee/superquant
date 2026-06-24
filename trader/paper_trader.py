@@ -93,23 +93,27 @@ def record_trade(conn, symbol, side, price, shares, pnl=0, pnl_pct=0, capital_af
 
 
 def get_ml_candidates():
-    """从 ML 模型预测结果读取候选池。
+    """从 ML 模型读取双通道候选: 主力(90%资金) + 探索(10%资金)。
 
     来源: ml/predict.py → pre_market/candidate.json
-    备选: 如模型未运行, 回退到默认候选
     """
     if os.path.exists(CANDIDATE_FILE):
         try:
             with open(CANDIDATE_FILE) as f:
                 data = json.load(f)
-                syms = [c['symbol'] for c in data.get('candidates', []) if c.get('prob', 0) >= ML_MIN_PROB]
-                if syms:
-                    print(f"  ML候选: {len(syms)}只 (P≥{ML_MIN_PROB})")
-                    return syms
+            main = [c['symbol'] for c in data.get('main', []) if c.get('prob', 0) >= ML_MIN_PROB]
+            disc = data.get('discovery', [])
+            main_s = [c['symbol'] for c in disc] if disc else []
+            # 合并去重: 探索通道的股票不在主力中重复
+            disc_s = [s for s in main_s if s not in set(main)]
+            all_syms = main + disc_s
+            if all_syms:
+                print(f"  ML候选: 主力{len(main)}只 + 探索{len(disc_s)}只 = {len(all_syms)}只")
+                return all_syms, len(main)  # 返回(列表, 主力数量)用于仓位分配
         except Exception as e:
             print(f"  [warn] 读取candidate.json失败: {e}")
     print("  ⚠️ candidate.json 不存在, 使用默认候选")
-    return ['SH600000', 'SZ000001', 'SH600036']
+    return ['SH600000', 'SZ000001', 'SH600036'], 3
 
 
 def build_memory_kdata(history, new_quote):
@@ -162,6 +166,9 @@ def run_scan(conn, capital, positions, tracked, history_cache):
         stop_price = calc_adaptive_stop(price, [], stop_params)
         risk_per_share = max(price - stop_price, 0.01)
         shares = calc_position_size(capital, price, risk_per_share, kelly_params)
+        # 探索通道: 仓位缩小到10%
+        if sym in disc_symbols:
+            shares = max(int(shares * 0.1 / 100) * 100, 100)
         if shares < 100: continue
         cost = shares * price * (1 + COMMISSION)
         if cost > capital: continue
@@ -239,8 +246,12 @@ def main():
     history_cache = {}
 
     print("  加载ML候选池...")
-    tracked = get_ml_candidates()
-    print(f"  监控池: {len(tracked)}只 (XGBoost预测)")
+    tracked, n_main = get_ml_candidates()
+    # 探索通道仓位: 10%资金, 主力通道: 90%资金
+    disc_count = len(tracked) - n_main
+    print(f"  监控池: {len(tracked)}只 (主力{n_main}只/探索{disc_count}只)")
+    # 保存探索通道标识
+    disc_symbols = set(tracked[n_main:]) if n_main < len(tracked) else set()
 
     if ARGS.live:
         while True:
