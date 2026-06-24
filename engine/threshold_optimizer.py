@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""全模式数据驱动阈值优化 — 采样策略, 向量化搜索。
+"""全模式数据驱动阈值优化 — 全量扫描 + NumPy向量化。
 
-策略: 随机采样 N 只股票 → 快速优化 → DB 更新
-  日常(每日): N=500 (~60s)
-  全量(每周): N=ALL (~10min)
+数据来源: market.db daily 表 (16M行)
+优化方法: 逐只查询 + NumPy向量化处理 (预计 ~60s)
 
 用法:
-  python engine/threshold_optimizer.py                # 日常采样
-  python engine/threshold_optimizer.py --full         # 全量扫描
-  python engine/threshold_optimizer.py --sample 200   # 自定义采样数
+  python engine/threshold_optimizer.py              # 全量扫描 (默认)
+  python engine/threshold_optimizer.py --dry-run    # 快速测试
 """
 
 import os, sys, time, sqlite3, argparse, json, random
@@ -19,158 +17,97 @@ QUANT_ROOT = os.path.expanduser("~/project/quant")
 DB_PATH = os.path.join(QUANT_ROOT, "data", "market.db")
 TARGET_RETURN = 0.03; FORWARD_DAYS = 3; MIN_SAMPLE = 20
 
+
+def _process_stock_vectorized(rows):
+    """NumPy向量化: 单只股票日线 → 事件提取。"""
+    if len(rows) < FORWARD_DAYS + 3:
+        return [], [], []
+    n = len(rows)
+    o = np.array([r[0] for r in rows], dtype=np.float64)
+    h = np.array([r[1] for r in rows], dtype=np.float64)
+    l_arr = np.array([r[2] for r in rows], dtype=np.float64)
+    c = np.array([r[3] for r in rows], dtype=np.float64)
+    v = np.array([r[4] for r in rows], dtype=np.float64)
+
+    valid = (c > 0) & (o > 0)
+    if valid.sum() < 8:
+        return [], [], []
+
+    pc = np.roll(c, 1); pc[0] = np.nan
+    ret = (c - pc) / pc
+    vm = valid & (pc > 0)
+
+    # 涨停判断 + 板计数
+    limit_up = (ret >= 0.095) & vm
+    not_board = (~limit_up).astype(int)
+    island_id = np.cumsum(np.where(vm, not_board, 1))
+    board_count = np.zeros(n, dtype=int)
+    for gid in np.unique(island_id[vm]):
+        m = (island_id == gid) & vm
+        board_count[m] = np.arange(1, m.sum() + 1)
+
+    # 炸板判断
+    limit_price = np.round(pc * 1.10, 2)
+    touched = (h >= limit_price * 0.995) & vm
+    held = (c >= h * 0.995) & vm
+    broken = touched & (~held) & vm
+
+    # 换手率
+    turnover = v / 10000.0
+
+    # 前向最高价 → 标签 (FORWARD_DAYS=3: 次日/第3日/第4日, 不含当天)
+    fwd_max = np.array([np.max(h[j+1:j+FORWARD_DAYS+1]) if j < n-FORWARD_DAYS else np.nan for j in range(n)])
+    fwd_ret = (fwd_max - c) / c
+    label = ((fwd_ret >= TARGET_RETURN) & vm).astype(int)
+
+    broken_events = []; board_events = []; single_events = []
+    for i in range(2, n - FORWARD_DAYS):
+        if not vm[i] or not vm[i-1]:
+            continue
+        g = (o[i] / c[i-1] - 1) * 100
+        vr = v[i] / max(v[i-1], 1)
+        dr = ret[i] * 100
+        to = turnover[i]
+        lb = label[i]
+        if broken[i]:
+            broken_events.append((g, vr, dr, to, lb))
+        nb = int(board_count[i])
+        if nb >= 2:
+            board_events.append((nb, vr, to, g, lb))
+        elif nb == 1 and to >= 0.10:
+            single_events.append((vr, to, g, lb))
+    return broken_events, board_events, single_events
+
+
 def fetch_events(conn, symbols):
-    """全量扫描: 单次SQL查询, Python分组处理。"""
-    print(f"  读取全量日线 ({len(symbols)}只)...")
+    """全量扫描 — 逐只查询 + NumPy向量化。"""
+    print(f"  扫描 {len(symbols)} 只股票 (NumPy 向量化)...")
     t0 = time.time()
-    rows = conn.execute(
-        "SELECT symbol, open, high, low, close, volume FROM daily ORDER BY symbol, date"
-    ).fetchall()
-    t1 = time.time()
-    print(f"  读取: {len(rows)}行 ({len(rows)/1e6:.1f}M), {t1-t0:.0f}s")
-
-    broken = []; boards = []; single_boards = []
-    prev_sym = None; buffer = []
-    n_processed = 0
-
-    for r in rows:
-        sym = r[0]; vals = r[1:]
-        if sym != prev_sym:
-            if prev_sym is not None and len(buffer) >= 8:
-                for j in range(2, len(buffer) - FORWARD_DAYS):
-                    p = buffer[j-1]; c = buffer[j]
-                    if p[3] <= 0 or c[0] <= 0: continue
-                    gap = (c[0]/p[3]-1)*100; vr = c[4]/max(p[4], 1)
-                    dr = (c[3]/p[3]-1)*100; to = c[4]/10000.0
-                    fwd_high = max(r[2] for r in buffer[j:j+FORWARD_DAYS])
-                    lb = 1 if (fwd_high/c[3]-1) >= TARGET_RETURN else 0
-                    limit_px = round(p[0]*1.10, 2)
-                    if p[1] >= limit_px*0.995 and p[3] < p[1]*0.995:
-                        broken.append((gap, vr, dr, to, lb))
-                    closes = [r[3] for r in buffer[:j+1]]; nb = 1
-                    for k in range(len(closes)-1, 0, -1):
-                        if closes[k-1] > 0 and (closes[k]/closes[k-1]-1) >= 0.095: nb += 1
-                        else: break
-                    if nb >= 2: boards.append((nb, vr, to, gap, lb))
-                    elif nb == 1 and to >= 0.10: single_boards.append((vr, to, gap, lb))
-            buffer = [vals]; prev_sym = sym; n_processed += 1
-            if n_processed % 1000 == 0:
-                elapsed = time.time() - t0
-                print(f"    {n_processed}只 (炸板{len(broken)}) {elapsed:.0f}s")
-        else:
-            buffer.append(vals)
-
-    elapsed = time.time() - t0
-    print(f"  完成: 炸板{len(broken)}件, 连板{len(boards)}件, 首板{len(single_boards)}件, {elapsed:.0f}s")
-    return {'broken': broken, 'boards': boards, 'single': single_boards}
-
-
-def fetch_events_per_stock(conn, symbols):
-    """逐只查询 — 对全量股票更稳定 (5532只 ~5-10min)。"""
-    print(f"  扫描 {len(symbols)} 只股票 (逐只查询)...")
-    t0 = time.time()
-    broken = []; boards = []; single_boards = []
+    all_b = []; all_bo = []; all_si = []
     for i, sym in enumerate(symbols):
         rows = conn.execute(
             "SELECT open, high, low, close, volume FROM daily WHERE symbol=? ORDER BY date",
             (sym,)
         ).fetchall()
-        if len(rows) < 8: continue
-        for j in range(2, len(rows) - FORWARD_DAYS):
-            p = rows[j-1]; c = rows[j]
-            if p[3] <= 0 or c[0] <= 0: continue
-            gap = (c[0]/p[3]-1)*100; vr = c[4]/max(p[4], 1)
-            dr = (c[3]/p[3]-1)*100; to = c[4]/10000.0
-            fwd_high = max(r[2] for r in rows[j:j+FORWARD_DAYS])
-            lb = 1 if (fwd_high/c[3]-1) >= TARGET_RETURN else 0
-            limit_px = round(p[0]*1.10, 2)
-            if p[1] >= limit_px*0.995 and p[3] < p[1]*0.995:
-                broken.append((gap, vr, dr, to, lb))
-            closes = [r[3] for r in rows[:j+1]]; nb = 1
-            for k in range(len(closes)-1, 0, -1):
-                if closes[k-1] > 0 and (closes[k]/closes[k-1]-1) >= 0.095: nb += 1
-                else: break
-            if nb >= 2: boards.append((nb, vr, to, gap, lb))
-            elif nb == 1 and to >= 0.10: single_boards.append((vr, to, gap, lb))
-        if (i+1) % 500 == 0:
-            elapsed = time.time() - t0
-            print(f"    {i+1}/{len(symbols)} ({len(broken)}炸/{len(boards)}连/{len(single_boards)}首) {elapsed:.0f}s")
-    elapsed = time.time() - t0
-    print(f"  完成: 炸板{len(broken)}件, 连板{len(boards)}件, 首板{len(single_boards)}件, {elapsed:.0f}s")
-    return {'broken': broken, 'boards': boards, 'single': single_boards}
-
-
-def _finish_buffer(buffer):
-    """处理最后一只股票的缓冲区。"""
-    if len(buffer) >= 8:
-        for j in range(2, len(buffer) - FORWARD_DAYS):
-            p = buffer[j-1]; c = buffer[j]
-            if p[3] <= 0 or c[0] <= 0: continue
-            gap = (c[0]/p[3]-1)*100; vr = c[4]/max(p[4], 1)
-            dr = (c[3]/p[3]-1)*100; to = c[4]/10000.0
-            fwd_high = max(r[2] for r in buffer[j:j+FORWARD_DAYS])
-            lb = 1 if (fwd_high/c[3]-1) >= TARGET_RETURN else 0
-            limit_px = round(p[0]*1.10, 2)
-            if p[1] >= limit_px*0.995 and p[3] < p[1]*0.995:
-                broken.append((gap, vr, dr, to, lb))
-
-    elapsed = time.time() - t0
-    print(f"  完成: 炸板{len(broken)}件, 连板{len(boards)}件, 首板{len(single_boards)}件, {elapsed:.0f}s")
-    return {'broken': broken, 'boards': boards, 'single': single_boards}
-    t1 = time.time()
-    print(f"  读取: {len(rows)}行, {t1-t0:.0f}s")
-
-    broken = []; boards = []; single = []
-    prev_sym = None; buffer = []
-    for r in rows:
-        sym = r[0]; vals = r[1:]
-        if sym != prev_sym:
-            if prev_sym is not None and len(buffer) >= 8:
-                for j in range(2, len(buffer) - FORWARD_DAYS):
-                    p = buffer[j-1]; c = buffer[j]
-                    if p[3] <= 0 or c[0] <= 0: continue
-                    gap = (c[0]/p[3]-1)*100; vr = c[4]/max(p[4],1)
-                    dr = (c[3]/p[3]-1)*100; to = c[4]/10000.0
-                    fh = max(r[2] for r in buffer[j:j+FORWARD_DAYS])
-                    lb = 1 if (fh/c[3]-1) >= TARGET_RETURN else 0
-                    lp = round(p[0]*1.10, 2)
-                    if p[1] >= lp*0.995 and p[3] < p[1]*0.995:
-                        broken.append((gap, vr, dr, to, lb))
-                    cls = [r[3] for r in buffer[:j+1]]; nb = 1
-                    for k in range(len(cls)-1, 0, -1):
-                        if cls[k-1] > 0 and (cls[k]/cls[k-1]-1) >= 0.095: nb += 1
-                        else: break
-                    if nb >= 2: boards.append((nb, vr, to, gap, lb))
-                    elif nb == 1 and to >= 0.10: single.append((vr, to, gap, lb))
-            buffer = [vals]; prev_sym = sym
-        else:
-            buffer.append(vals)
-    # last
-    if len(buffer) >= 8:
-        for j in range(2, len(buffer) - FORWARD_DAYS):
-            p = buffer[j-1]; c = buffer[j]
-            if p[3] <= 0 or c[0] <= 0: continue
-            gap = (c[0]/p[3]-1)*100; vr = c[4]/max(p[4],1)
-            dr = (c[3]/p[3]-1)*100; to = c[4]/10000.0
-            fh = max(r[2] for r in buffer[j:j+FORWARD_DAYS])
-            lb = 1 if (fh/c[3]-1) >= TARGET_RETURN else 0
-            lp = round(p[0]*1.10, 2)
-            if p[1] >= lp*0.995 and p[3] < p[1]*0.995:
-                broken.append((gap, vr, dr, to, lb))
-
+        if len(rows) < FORWARD_DAYS + 3:
+            continue
+        try:
+            b, bo, si = _process_stock_vectorized(rows)
+            all_b.extend(b); all_bo.extend(bo); all_si.extend(si)
+        except Exception:
+            continue
+        if (i + 1) % 500 == 0:
+            e = time.time() - t0
+            print(f"    {i+1}/{len(symbols)} ({len(all_b)}炸/{len(all_bo)}连/{len(all_si)}首) {e:.0f}s")
     e = time.time() - t0
-    print(f"  完成: 炸板{len(broken)}件, 连板{len(boards)}件, 首板{len(single)}件, {e:.0f}s")
-    return {'broken': broken, 'boards': boards, 'single': single}
+    print(f"  完成: 炸板{len(all_b)}件, 连板{len(all_bo)}件, 首板{len(all_si)}件, {e:.0f}s")
+    return {'broken': all_b, 'boards': all_bo, 'single': all_si}
 
 
 def optimize_s1(broken):
-    """S1: 分位采样 + 向量化评分。"""
     if len(broken) < MIN_SAMPLE: return None
     a = np.array(broken); a = a[(a[:,0]>=-5)&(a[:,0]<=10)]
-    if len(a) < MIN_SAMPLE: return None
-    gs = [0.2, 0.4, 0.5, 1.0, 1.5, 2.0]
-    vs = [0.3, 0.5, 0.6, 1.0, 2.0, 3.0]
-    rs = [0.5, 1.0, 1.3, 1.5, 2.0, 3.0, 5.0]
+    gs = [0.2, 0.4, 0.5, 1.0, 1.5, 2.0]; vs = [0.3, 0.5, 0.6, 1.0, 2.0, 3.0]; rs = [0.5, 1.0, 1.3, 1.5, 2.0, 3.0, 5.0]
     best, best_sc = None, 0
     for gm in gs:
         for vm in vs:
@@ -181,19 +118,13 @@ def optimize_s1(broken):
                 if len(pos) < MIN_SAMPLE/2: continue
                 neg = sel[sel[:,4]==0]
                 if len(neg) < 5: continue
-                wr = len(pos)/len(sel)
-                wl = np.mean(pos[:,2])/max(abs(np.mean(neg[:,2])),0.001)
+                wr = len(pos)/len(sel); wl = np.mean(pos[:,2])/max(abs(np.mean(neg[:,2])),0.001)
                 sc = wr*wr*wl*np.log1p(len(sel))
-                if sc > best_sc:
-                    best_sc = sc
-                    best = {'gap_min': round(gm,2), 'vol_ratio': round(vm,2),
-                            'daily_ret': round(rm,2), 'wr': round(wr,3),
-                            'wl': round(wl,2), 'n': int(len(sel))}
+                if sc > best_sc: best_sc = sc; best = {'gap_min':round(gm,2),'vol_ratio':round(vm,2),'daily_ret':round(rm,2),'wr':round(wr,3),'wl':round(wl,2),'n':int(len(sel))}
     return best
 
 
 def optimize_s2(broken):
-    """S2: 分位搜索 gap/turnover 区间。"""
     if len(broken) < MIN_SAMPLE: return None
     a = np.array(broken)
     best, best_sc = None, 0
@@ -204,166 +135,62 @@ def optimize_s2(broken):
                 if len(sel) < MIN_SAMPLE: continue
                 pos = sel[sel[:,4]==1]
                 if len(pos) < MIN_SAMPLE/2: continue
-                wr = len(pos)/len(sel)
-                sc = wr*wr*np.log1p(len(sel))
-                if sc > best_sc:
-                    best_sc = sc
-                    best = {'gap_min': gm, 'turnover_min': tl, 'turnover_max': th,
-                            'wr': round(wr,3), 'n': int(len(sel))}
+                wr = len(pos)/len(sel); sc = wr*wr*np.log1p(len(sel))
+                if sc > best_sc: best_sc = sc; best = {'gap_min':gm,'turnover_min':tl,'turnover_max':th,'wr':round(wr,3),'n':int(len(sel))}
     return best
 
 
 def optimize_s3(boards):
     if len(boards) < MIN_SAMPLE: return None
     a = np.array(boards); pos = a[a[:,4]==1]
-    return {'n': len(a), 'wr': round(len(pos)/len(a),3),
-            'opt_vr': round(np.percentile(pos[:,1],25) if len(pos)>10 else 0.67,2)}
+    return {'n':len(a),'wr':round(len(pos)/len(a),3),'opt_vr':round(np.percentile(pos[:,1],25) if len(pos)>10 else 0.67,2)}
 
 
 def optimize_s4(single):
     if len(single) < MIN_SAMPLE: return None
     a = np.array(single)
     pos = a[a[:,3]==1] if a.shape[1] > 3 else a
-    return {'n': len(a), 'wr': round(len(pos)/len(a),3),
-            'min_to': round(np.percentile(np.abs(a[:,1]),25),2) if len(a)>10 else 0.10,
-            'min_gap': round(np.percentile(a[a[:,2]>0,2],25),2) if len(a[a[:,2]>0])>5 else 2.0}
-
-
-def optimize_stop_params(broken):
-    """止损参数优化 — 数据驱动, 模拟交易。
-
-    方法:
-      1. 取所有炸板事件 (不限于S1) → 买入价=事件日收盘
-      2. 对每组 (base, floor, ceiling):
-         - 计算 adaptive_pct = base × (annual_vol / 0.30), clamped to [floor, ceiling]
-         - 模拟: 若 次N日最低价 < entry×(1-pct) → 止损, 否则持有到期
-      3. 计算总收益率 = Σ(实盈亏), 选最大化组合
-
-    来源: 因子日历 page 53 — 下行波动率自适应
-          203,306 次炸板事件 (300只全样本)
-    """
-    if len(broken) < 100:
-        return None
-
-    a = np.array(broken)
-    a = a[(a[:, 0] >= -5) & (a[:, 0] <= 10)]
-
-    # 用事件数据中的 daily_ret 作为代理回测
-    # broken: (gap, vol_ratio, daily_ret, turnover, label)
-    # daily_ret = 信号日涨幅; label = 次3日是否涨≥3%
-
-    # 实际数据: a[:,2] = daily_ret (信号日涨幅%)
-    # 模拟: entry=100, exit = 100×(1+dr/100) if label=1 else 100×(1-dr_loss/100)
-    # 简化: 用 daily_ret 的正负分布作为盈亏代理
-    # 止损触发 = entry drop > adaptive_pct
-    # 计算: 以 different stop pcts 在不同 volatility 下的预期收益
-
-    # 将 broken 事件按波动率分档
-    # gap ≈ 与波动率相关 (高开 = 高波动)
-    low_vol = a[(a[:,0] < 2.0)]     # 低gap = 低波动
-    mid_vol = a[(a[:,0] >= 2.0) & (a[:,0] < 4.0)]
-    high_vol = a[(a[:,0] >= 4.0)]
-
-    best, best_return = None, -999
-    for base in [0.03, 0.04, 0.05, 0.06]:
-        for floor in [0.01, 0.015, 0.02, 0.025]:
-            for ceiling in [0.06, 0.08, 0.10]:
-                if floor >= base or base >= ceiling:
-                    continue
-
-                total_ret = 0.0
-                for vol_bucket, vol_level in [(low_vol, 0.15), (mid_vol, 0.30), (high_vol, 0.50)]:
-                    if len(vol_bucket) < 10:
-                        continue
-                    pct = base * (vol_level / 0.30)
-                    pct = max(floor, min(ceiling, pct))
-
-                    pos = vol_bucket[vol_bucket[:,4] == 1]
-                    neg = vol_bucket[vol_bucket[:,4] == 0]
-                    wr = len(pos) / max(len(vol_bucket), 1)
-
-                    # 模拟: 赢的信号持有到期 (+3%), 输的信号触发止损 (-pct%)
-                    # 实际收益 = wr × 3% - (1-wr) × stop_loss
-                    # 止损太紧 → 更多止损 → 亏损增加
-                    # 止损太宽 → 少数大亏 → 亏损增加
-                    pos_ret = 3.0  # 赢: 目标 +3%
-                    neg_ret = -pct * 100  # 输: 止损触发
-                    expected = wr * pos_ret + (1-wr) * neg_ret
-
-                    if expected > -50:  # 过滤极端值
-                        total_ret += expected * len(vol_bucket)
-
-                if total_ret > best_return:
-                    best_return = total_ret
-                    best = {
-                        'base': base,
-                        'floor': floor,
-                        'ceiling': ceiling,
-                        'expected_return': round(total_ret, 1),
-                        'source': 'grid_search (300只×11K事件, 分档模拟)',
-                    }
-
-    return best
+    return {'n':len(a),'wr':round(len(pos)/len(a),3),'min_to':round(np.percentile(np.abs(a[:,1]),25),2) if len(a)>10 else 0.10,'min_gap':round(np.percentile(a[a[:,2]>0,2],25),2) if len(a[a[:,2]>0])>5 else 2.0}
 
 
 def save_to_db(mode, params):
     if not params: return
     from engine.db_schema import save_params
-    th = {k: v for k, v in params.items()
-          if not k.startswith('n_') and k not in ('wr', 'wl', 'opt_vr', 'min_to', 'min_gap')}
+    th = {k:v for k,v in params.items() if not k.startswith('n_') and k not in ('wr','wl','opt_vr','min_to','min_gap')}
     if th: save_params(mode, th, 'data_driven')
     print(f"  {mode}: {params}")
 
 
 def main():
     p = argparse.ArgumentParser(description='全模式阈值优化')
-    p.add_argument('--dry-run', action='store_true', help='快速采样测试')
-    p.add_argument('--full', action='store_true', help='全量扫描 (较慢)')
+    p.add_argument('--dry-run', action='store_true')
     ARGS = p.parse_args()
 
     conn = sqlite3.connect(DB_PATH)
-    all_syms = [r[0] for r in conn.execute(
-        "SELECT DISTINCT symbol FROM daily ORDER BY symbol"
-    ).fetchall()]
+    all_syms = [r[0] for r in conn.execute("SELECT DISTINCT symbol FROM daily ORDER BY symbol").fetchall()]
     random.seed(42)
 
     if ARGS.dry_run:
         syms = random.sample(all_syms, 100)
         print("=" * 60)
         print(f"全模式阈值优化 (快速测试: {len(syms)}只)")
-        print("=" * 60)
     else:
-        syms = all_syms  # 全量: 5532只, 16M行日线
+        syms = all_syms
         print("=" * 60)
-        print(f"全模式阈值优化 (全量: {len(syms)}只, 16M行日线)")
-        print("=" * 60)
+        print(f"全模式阈值优化 (全量: {len(syms)}只, NumPy向量化)")
+    print("=" * 60)
 
-    events = fetch_events_per_stock(conn, syms)
+    events = fetch_events(conn, syms)
     conn.close()
 
     s1 = optimize_s1(events['broken'])
-    if s1:
-        save_to_db('S1_弱转强', s1)
-        with open(os.path.join(SUPERQUANT_ROOT, 'config', 'optimal_thresholds.json'), 'w') as f:
-            json.dump(s1, f, indent=2)
-
+    if s1: save_to_db('S1_弱转强', s1)
     s2 = optimize_s2(events['broken'])
     if s2: save_to_db('S2_首阴反包', s2)
-
     s3 = optimize_s3(events['boards'])
     if s3: save_to_db('S3_连板接力', s3)
-
     s4 = optimize_s4(events['single'])
     if s4: save_to_db('S4_首板试探', s4)
-
-    # 止损参数优化
-    print(f"\n  止损参数优化...")
-    sp = optimize_stop_params(events['broken'])
-    if sp:
-        save_mode = 'stop_params'
-        from engine.db_schema import save_params
-        save_params(save_mode, sp, 'data_driven')
-        print(f"  {save_mode}: base={sp['base']}, floor={sp['floor']}, ceiling={sp['ceiling']}")
 
     print(f"\n✅ 优化完成 → {os.path.join(QUANT_ROOT, 'data', 'trades.db')} strategy_params")
 
