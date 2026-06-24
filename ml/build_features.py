@@ -99,11 +99,8 @@ def build_l3_batch(conn, start_day=0, count_days=10):
     import easy_tdx as et
     log.info(f"开始 L3 资金流 (start={start_day}, count={count_days}, 4线程)")
     syms = [r[0] for r in conn.execute("SELECT DISTINCT symbol FROM daily ORDER BY symbol").fetchall()]
-    existing = {r[0] for r in conn.execute(f"SELECT DISTINCT symbol FROM daily_features WHERE main_net_in IS NOT NULL AND date >= date('now','-{start_day+count_days} days')").fetchall()}
-    todo = [s for s in syms if s not in existing]
-    log.info(f"  总{len(syms)}只, 已有{len(existing)}只, 待拉{len(todo)}只")
-    if not todo: log.info("L3 跳过 (全部已存在)"); return
-    n=len(todo); cs=(n+3)//4; chunks=[todo[i:i+cs] for i in range(0,n,cs)]
+    log.info(f"  总{len(syms)}只, 全量拉取 (INSERT OR REPLACE 自动去重)")
+    n=len(syms); cs=(n+3)//4; chunks=[syms[i:i+cs] for i in range(0,n,cs)]
     log.info(f"  4组: {[len(c) for c in chunks]}")
     results={}; lock=threading.Lock()
     with ThreadPoolExecutor(max_workers=4) as ex:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """XGBoost 涨停预测 — 盘前运行, 输出 Top N 候选。用法: python ml/predict.py"""
-import os, sys, time, sqlite3, json
+import os, sys, time, sqlite3, json, pickle
 from collections import defaultdict
 import numpy as np
 
@@ -80,26 +80,38 @@ for sym, rs in daily_data.items():
 X = np.array(X_list, dtype=np.float32)
 print(f"  特征: {X.shape}, {time.time()-t0:.0f}s")
 
-# ── 4. 预测 ──
+# ── 4. XGBoost 预测 ──
 t0 = time.time()
 probs = model.predict_proba(X)[:, 1]
-results = sorted(zip(symbols, probs), key=lambda x: -x[1])
-print(f"  预测: {len(results)}只, {time.time()-t0:.0f}s")
 
-# ── 5. 输出 ──
-print(f"\n🎯 今日涨停候选 Top {TOP_N}:")
-print(f"{'排名':<5} {'股票':<10} {'名称':<10} {'P(涨停)':>8} {'昨收':>8}")
+# ── 5. 孤立森林 交叉验证 ──
+if_path = os.path.join(MODEL_DIR, 'if_model.pkl')
+if_probs = np.zeros(len(probs))
+if os.path.exists(if_path):
+    with open(if_path, 'rb') as f:
+        if_model = pickle.load(f)
+    if_raw = -if_model.score_samples(X)
+    if_probs = (if_raw - if_raw.min()) / (if_raw.max() - if_raw.min() + 1e-10)  # 0=正常, 1=极异常
+
+# 组合: XGBoost × IF。一只股票要 "高概率涨停" AND "异常"
+combined = probs * (0.5 + 0.5 * if_probs)  # IF权重50%
+results = sorted(zip(symbols, probs, if_probs, combined), key=lambda x: -x[3])
+print(f"  预测: {len(results)}只 (XGBoost+IF), {time.time()-t0:.0f}s")
+
+# ── 6. 输出 ──
+print(f"\n🎯 今日涨停候选 Top {TOP_N} (XGBoost × 孤立森林):")
+print(f"{'排名':<5} {'股票':<10} {'名称':<10} {'XGBoost':>8} {'异常度':>8} {'综合':>8} {'昨收':>8}")
 conn = sqlite3.connect(DB_PATH)
-for i, (sym, prob) in enumerate(results[:TOP_N], 1):
+for i, (sym, xgb_prob, if_prob, combined) in enumerate(results[:TOP_N], 1):
     row = conn.execute("SELECT name,close FROM stocks s JOIN daily d ON s.symbol=d.symbol WHERE d.symbol=? ORDER BY d.date DESC LIMIT 1",(sym,)).fetchone()
     name = row[0] if row else '?'
     px = row[1] if row else 0
-    print(f"{i:<5} {sym:<10} {name:<10} {prob:>8.4f} {px:>8.2f}")
+    print(f"{i:<5} {sym:<10} {name:<10} {xgb_prob:>8.4f} {if_prob:>8.4f} {combined:>8.4f} {px:>8.2f}")
 conn.close()
 
 # 保存候选
 os.makedirs(os.path.dirname(CANDIDATE_FILE), exist_ok=True)
-candidates = [{'symbol': s, 'prob': round(float(p), 4), 'name': ''} for s, p in results[:TOP_N]]
+candidates = [{'symbol': s, 'prob': round(float(c), 4), 'name': ''} for s, _, _, c in results[:TOP_N]]
 with open(CANDIDATE_FILE, 'w') as f:
     json.dump({'date': today, 'candidates': candidates}, f, indent=2, ensure_ascii=False)
 print(f"\n✅ 候选保存: {CANDIDATE_FILE} ({len(candidates)}只)")

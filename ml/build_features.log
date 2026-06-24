@@ -293,3 +293,8 @@
 2026-06-25 00:22:16,663 [ThreadPoolExecutor-0_2]   [L3-2] 完成: 成功0/失败1, 0s
 2026-06-25 00:22:16,663 [MainThread] L3 完成: 0条, 11s (0.2min)
 2026-06-25 00:22:16,664 [MainThread] === 全部完成 (总耗时11s) ===
+2026-06-25 00:28:38,119 [MainThread] === 开始特征预计算 (PID=27940) ===
+2026-06-25 00:28:38,387 [MainThread] NumExpr defaulting to 8 threads.
+2026-06-25 00:28:39,106 [MainThread] 开始 L3 资金流 (start=0, count=10, 4线程)
+2026-06-25 00:28:48,047 [MainThread]   总5532只, 全量拉取 (INSERT OR REPLACE 自动去重)
+2026-06-25 00:28:48,047 [MainThread]   4组: [1383, 1383, 1383, 1383]
