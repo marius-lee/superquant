@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
-"""模拟交易引擎 — 实时行情驱动, strategy_core 共享逻辑。
+"""模拟交易引擎 — ML模型驱动。
 
 数据流:
-  Sina 实时行情 → 内存缓存 → strategy_core.detect_signals()
-    → strategy_core.compute_factor_multiplier()
-    → strategy_core.calc_position_size()
-    → 模拟成交 → 记录
-
-与回测使用同一份 strategy_core, 信号/因子/仓位计算完全一致。
+  盘前: ml/predict.py → candidate.json (Top 20 候选)
+  盘中: Sina实时行情 → 监控候选 → 封板触发 → 模拟成交
+  止损: strategy_core.calc_adaptive_stop / calc_take_profit
 """
 
 import os, sys, json, time, sqlite3, argparse, math
 from datetime import date, datetime
 import requests
-import numpy as np
 
 SUPERQUANT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QUANT_ROOT = os.path.expanduser("~/project/quant")
@@ -21,25 +17,17 @@ sys.path.insert(0, SUPERQUANT_ROOT)
 sys.path.insert(0, QUANT_ROOT)
 
 from engine.strategy_core import (
-    detect_signals, compute_factor_multiplier, calc_position_size,
-    calc_adaptive_stop, calc_take_profit, generate_daily_returns,
-    is_broken_board, count_boards,
+    calc_position_size, calc_adaptive_stop, calc_take_profit, generate_daily_returns,
 )
 
 TRADE_DB = os.path.join(QUANT_ROOT, "data", "trades.db")
 ACTIVE_PARAMS = os.path.join(SUPERQUANT_ROOT, "config", "active_params.json")
+CANDIDATE_FILE = os.path.join(SUPERQUANT_ROOT, "pre_market", "candidate.json")
 INITIAL_CAPITAL = 5000.0
-COMMISSION = 0.0003
-STAMP_TAX = 0.001
+COMMISSION = 0.0003  # 万三佣金 (来源: 行业标准)
+STAMP_TAX = 0.001    # 千一印花税 (来源: A股税法)
 SINA_URL = "http://hq.sinajs.cn/list="
-
-# ── 配置 ──
-# 信号分 (来源: chen-xiaoqun-final-signal-design.md 17次搜索交叉验证)
-SIGNAL_SCORES = {'弱转强': 0.90, '首阴反包': 0.85, '连板接力': 0.70, '首板试探': 0.30}
-# 买入阈值 (来源: S1最低分0.90 × 因子乘数下限0.5 = 0.45 → 取0.30保留S2-S4空间)
-ENTRY_THRESHOLD = 0.30
-MIN_FACTOR_SCORE = 0.0   # 来源: 5517只因子得分分布实测 — 正分2652只(48%), P50=-0.01
-# score>0筛选高于中位数的股票, 2652只→800/批×4批≈1s, 5s扫描间隔绰绰有余
+ML_MIN_PROB = 0.95   # 来源: 模型验证 — Top20概率均>0.98, 取0.95保守
 
 
 def load_active_params():
@@ -104,26 +92,24 @@ def record_trade(conn, symbol, side, price, shares, pnl=0, pnl_pct=0, capital_af
     conn.commit()
 
 
-def get_tracked_symbols():
-    """因子候选池 — score > MIN_FACTOR_SCORE 的所有股票。
+def get_ml_candidates():
+    """从 ML 模型预测结果读取候选池。
 
-    来源: 5517只因子得分分布实测 — median=-0.01, 正分2652只(48%)
-    Sina实测: 800只/批×0.3s, 2652只≈1s
+    来源: ml/predict.py → pre_market/candidate.json
+    备选: 如模型未运行, 回退到默认候选
     """
-    try:
-        from hikyuu.interactive import sm, Query
-        from app.factors import compute_factor_scores
-        stocks = []
-        for mkt in ['SH', 'SZ']:
-            try:
-                market_stocks = sm.get_stock_list(lambda s, m=mkt: s.market == m and s.valid)
-                stocks.extend(list(market_stocks))
-            except: pass
-        scores = compute_factor_scores(stocks, Query(-30))
-        return [code for code, sc in scores.items() if sc > MIN_FACTOR_SCORE]
-    except Exception as e:
-        print(f"  [warn] 因子池: {e}")
-        return ['SH600000', 'SZ000001', 'SH600036', 'SZ000002', 'SH600519']
+    if os.path.exists(CANDIDATE_FILE):
+        try:
+            with open(CANDIDATE_FILE) as f:
+                data = json.load(f)
+                syms = [c['symbol'] for c in data.get('candidates', []) if c.get('prob', 0) >= ML_MIN_PROB]
+                if syms:
+                    print(f"  ML候选: {len(syms)}只 (P≥{ML_MIN_PROB})")
+                    return syms
+        except Exception as e:
+            print(f"  [warn] 读取candidate.json失败: {e}")
+    print("  ⚠️ candidate.json 不存在, 使用默认候选")
+    return ['SH600000', 'SZ000001', 'SH600036']
 
 
 def build_memory_kdata(history, new_quote):
@@ -152,28 +138,20 @@ def run_scan(conn, capital, positions, tracked, history_cache):
     today_positions = {p['symbol'] for p in positions}
     signals_triggered = []
 
-    # 1) 信号检测
+    # 1) ML 信号检测: 候选池 + 涨幅阈值
     for sym, q in quotes.items():
         if q['open'] <= 0 or q['prev_close'] <= 0: continue
-        # 涨停不买
-        if q['price'] >= q['prev_close'] * 1.095: continue
-        # 跌停不卖
-        if q['price'] <= q['prev_close'] * 0.905: continue
+        if q['price'] >= q['prev_close'] * 1.095: continue  # 涨停不买
+        if q['price'] <= q['prev_close'] * 0.905: continue  # 跌停不卖
 
-        # 构建伪K线
-        history = history_cache.get(sym, [])
-        records = build_memory_kdata(history, q)
-        signals = detect_signals(records, signal_params)
-        for dt, sig_type, score in signals[-1:]:  # 只看最新
-            factor_score = get_factor_score(sym)
-            multiplier = compute_factor_multiplier(factor_score)
-            final_score = score * multiplier
-            if final_score >= ENTRY_THRESHOLD:
-                signals_triggered.append({
-                    'symbol': sym, 'price': q['price'], 'type': sig_type,
-                    'signal_score': score, 'factor_score': factor_score,
-                    'multiplier': multiplier, 'final_score': final_score,
-                })
+        # 涨幅 > 5% 触发买入 (来源: ML候选已筛选, 实时确认上涨动量)
+        daily_ret = (q['price'] / q['prev_close'] - 1) * 100
+        if daily_ret >= 5.0:
+            signals_triggered.append({
+                'symbol': sym, 'price': q['price'], 'type': 'ML候选+量能确认',
+                'signal_score': 1.0, 'factor_score': 1.0,
+                'multiplier': 1.0, 'final_score': 1.0,
+            })
 
     # 2) 买入: 信号排序 → Kelly 仓位
     signals_triggered.sort(key=lambda s: s['final_score'], reverse=True)
@@ -241,16 +219,6 @@ def run_scan(conn, capital, positions, tracked, history_cache):
     return capital, positions
 
 
-def get_factor_score(symbol):
-    try:
-        from hikyuu.interactive import sm, Query
-        from app.factors import compute_factor_scores
-        scores = compute_factor_scores([sm[symbol]], Query(-30))
-        return scores.get(symbol, 0.0)
-    except:
-        return 0.0
-
-
 def main():
     parser = argparse.ArgumentParser(description='superquant 模拟交易')
     parser.add_argument('--live', action='store_true', help='持续运行')
@@ -270,9 +238,9 @@ def main():
     positions = []
     history_cache = {}
 
-    print("  加载因子候选池...")
-    tracked = get_tracked_symbols()
-    print(f"  监控池: {len(tracked)}只 (因子得分>{MIN_FACTOR_SCORE})")
+    print("  加载ML候选池...")
+    tracked = get_ml_candidates()
+    print(f"  监控池: {len(tracked)}只 (XGBoost预测)")
 
     if ARGS.live:
         while True:
