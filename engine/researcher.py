@@ -109,9 +109,9 @@ def run_research():
         from engine.threshold_optimizer import fetch_events, grid_search, DB_PATH as T_DB
         import sqlite3 as _sql
         conn = _sql.connect(T_DB)
-        # 采样模式: 随机500只股票
+        # 全量扫描: 所有股票 (5532只, 耗时~38s)
         syms = [r[0] for r in conn.execute(
-            "SELECT DISTINCT symbol FROM daily ORDER BY RANDOM() LIMIT 500"
+            "SELECT DISTINCT symbol FROM daily ORDER BY symbol"
         ).fetchall()]
         events = fetch_events(conn, syms)
         conn.close()
@@ -145,7 +145,6 @@ def run_research():
         'date': date.today().isoformat(),
         'ic': ic_results,
         'weights': weights,
-        'signals': sg_sample,
         'signal_params': param_updates,
         'kelly': kelly_params,
         'n_stocks': len(stocks),
