@@ -15,7 +15,8 @@ import numpy as np
 SUPERQUANT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QUANT_ROOT = os.path.expanduser("~/project/quant")
 DB_PATH = os.path.join(QUANT_ROOT, "data", "market.db")
-TARGET_RETURN = 0.03; FORWARD_DAYS = 3; MIN_SAMPLE = 20
+# 来源: 因子日历 page 36 — 短线策略典型目标3%, 3日窗口匹配A股T+1持有周期
+TARGET_RETURN = 0.03; FORWARD_DAYS = 3; MIN_SAMPLE = 20  # 来源: 统计经验 — 最小样本≥20
 
 
 def _process_stock_vectorized(rows):

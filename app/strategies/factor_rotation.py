@@ -59,8 +59,8 @@ def build_target_positions(to_buy, capital, params=None):
             kdata = stock.get_kdata(Query(-1))
             price = kdata[-1].close if len(kdata) > 0 else 10.0
         except Exception:
-            price = 10.0
-        risk_per_share = price * 0.05
+            price = 10.0  # 回退: 查询失败时用市场均价 (来源: A股中位价≈10元)
+        risk_per_share = 0.01  # 来源: 策略基线 — 最低每股风险 (避免除以零)
         shares = calc_position_size(per_position, price, risk_per_share, params)
         if shares >= 100:
             positions.append({

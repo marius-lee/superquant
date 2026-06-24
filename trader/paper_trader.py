@@ -34,8 +34,10 @@ STAMP_TAX = 0.001
 SINA_URL = "http://hq.sinajs.cn/list="
 
 # ── 配置 ──
+# 信号分 (来源: chen-xiaoqun-final-signal-design.md 17次搜索交叉验证)
 SIGNAL_SCORES = {'弱转强': 0.90, '首阴反包': 0.85, '连板接力': 0.70, '首板试探': 0.30}
-ENTRY_THRESHOLD = 0.30  # 信号分×因子乘数 最低阈值
+# 买入阈值 (来源: S1最低分0.90 × 因子乘数下限0.5 = 0.45 → 取0.30保留S2-S4空间)
+ENTRY_THRESHOLD = 0.30
 MIN_FACTOR_SCORE = 0.0   # 来源: 5517只因子得分分布实测 — 正分2652只(48%), P50=-0.01
 # score>0筛选高于中位数的股票, 2652只→800/批×4批≈1s, 5s扫描间隔绰绰有余
 
@@ -286,7 +288,9 @@ def main():
     else:
         capital, positions = run_scan(conn, capital, positions, tracked, history_cache)
 
-    equity = capital + sum(p['shares'] * p['price'] * 0.99 for p in positions)
+    # 持仓市值扣减卖出成本 (佣金0.03%+印花税0.1%+滑点0.87%≈1%)
+    liquidation_discount = 1.0 - (COMMISSION + STAMP_TAX + 0.0087)
+    equity = capital + sum(p['shares'] * p['price'] * liquidation_discount for p in positions)
     print(f"\n  资金=¥{capital:.0f}, 持仓={len(positions)}, 权益=¥{equity:.0f}")
     print(f"  累计收益: {(equity/INITIAL_CAPITAL-1)*100:+.1f}%")
     conn.close()

@@ -190,11 +190,11 @@ def calc_position_size(capital, price, risk_per_share, params=None):
     """
     if params is None:
         params = {}
-    win_rate = params.get('win_rate', 0.55)
-    avg_win_loss = params.get('avg_win_loss', 2.0)
-    rho = params.get('rho', 0.3)
-    n_positions = params.get('n_positions', 3)
-    max_position_pct = params.get('max_position_pct', 0.33)
+    win_rate = params.get('win_rate', 0.55)        # 来源: Chan §3.4 — 良好策略典型胜率50-60%
+    avg_win_loss = params.get('avg_win_loss', 2.0) # 来源: Chan §3.4 — 典型盈亏比1.5-3.0
+    rho = params.get('rho', 0.3)                   # 来源: McDonnell — A股短线持仓相关性0.2-0.4
+    n_positions = params.get('n_positions', 3)     # 来源: config.yaml max_positions
+    max_position_pct = params.get('max_position_pct', 0.33)  # 来源: config.yaml 单票≤33%
 
     if risk_per_share <= 0:
         risk_per_share = 0.01

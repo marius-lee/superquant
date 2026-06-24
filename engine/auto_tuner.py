@@ -43,11 +43,12 @@ DEFAULTS = {
         'adaptive_stop_ceiling': 0.08,
     },
     'kelly': {
-        'win_rate': 0.55,
-        'avg_win_loss': 2.0,
-        'half_kelly_mult': 0.5,
-        'rho': 0.3,
-        'n_positions': 3,
+        'win_rate': 0.55,        # 来源: Chan §3.4 — 良好策略典型胜率
+        'avg_win_loss': 2.0,     # 来源: Chan §3.4 — 典型盈亏比
+        'half_kelly_mult': 0.5,  # 来源: Chan §3.4 — 半Kelly保留75%收益
+        'rho': 0.3,              # 来源: McDonnell — A股持仓相关性
+        'n_positions': 3,        # 来源: config.yaml max_positions
+        'max_position_pct': 0.33,# 来源: config.yaml 单票≤33%
     },
     'meta': {
         'updated_at': date.today().isoformat(),
