@@ -36,7 +36,8 @@ SINA_URL = "http://hq.sinajs.cn/list="
 # ── 配置 ──
 SIGNAL_SCORES = {'弱转强': 0.90, '首阴反包': 0.85, '连板接力': 0.70, '首板试探': 0.30}
 ENTRY_THRESHOLD = 0.30  # 信号分×因子乘数 最低阈值
-TRACKED_COUNT = 200     # 因子候选池大小
+MIN_FACTOR_SCORE = 0.0   # 来源: 5517只因子得分分布实测 — 正分2652只(48%), P50=-0.01
+# score>0筛选高于中位数的股票, 2652只→800/批×4批≈1s, 5s扫描间隔绰绰有余
 
 
 def load_active_params():
@@ -49,29 +50,32 @@ def load_active_params():
 def fetch_quotes(symbols):
     if not symbols:
         return {}
+    # 分批请求: Sina API实测800只/次0.3s, 每批800只
+    BATCH = 800  # 来源: Sina实测 — 800只0.3s, 连发未限流
+    results = {}
     codes = [f"{'sh' if s.startswith('6') else 'sz'}{s}" for s in symbols]
-    url = SINA_URL + ",".join(codes[:200])
-    try:
-        resp = requests.get(url, timeout=15, headers={"Referer": "https://finance.sina.com.cn"})
-        resp.encoding = 'gb2312'
-        results = {}
-        for line in resp.text.strip().split('\n'):
-            if '=' not in line: continue
-            var, data = line.split('=', 1)
-            code = var.split('_')[-1]
-            fields = data.strip('";').split(',')
-            if len(fields) < 32 or not fields[1]: continue
-            sym = code[2:]
-            results[sym] = {
-                'open': float(fields[1]), 'prev_close': float(fields[2]),
-                'price': float(fields[3]), 'high': float(fields[4]),
-                'low': float(fields[5]), 'volume': float(fields[8]),
-                'amount': float(fields[9]),
-            }
-        return results
-    except Exception as e:
-        print(f"  [warn] 行情获取: {e}")
-        return {}
+    for i in range(0, len(codes), BATCH):
+        batch = codes[i:i+BATCH]
+        url = SINA_URL + ",".join(batch)
+        try:
+            resp = requests.get(url, timeout=15, headers={"Referer": "https://finance.sina.com.cn"})
+            resp.encoding = 'gb2312'
+            for line in resp.text.strip().split('\n'):
+                if '=' not in line: continue
+                var, data = line.split('=', 1)
+                code = var.split('_')[-1]
+                fields = data.strip('";').split(',')
+                if len(fields) < 32 or not fields[1]: continue
+                sym = code[2:]
+                results[sym] = {
+                    'open': float(fields[1]), 'prev_close': float(fields[2]),
+                    'price': float(fields[3]), 'high': float(fields[4]),
+                    'low': float(fields[5]), 'volume': float(fields[8]),
+                    'amount': float(fields[9]),
+                }
+        except Exception as e:
+            print(f"  [warn] 行情获取({i//BATCH+1}/{ (len(codes)-1)//BATCH+1}): {e}")
+    return results
 
 
 def init_account(conn):
@@ -99,7 +103,11 @@ def record_trade(conn, symbol, side, price, shares, pnl=0, pnl_pct=0, capital_af
 
 
 def get_tracked_symbols():
-    """因子 Top N 候选池。"""
+    """因子候选池 — score > MIN_FACTOR_SCORE 的所有股票。
+
+    来源: 5517只因子得分分布实测 — median=-0.01, 正分2652只(48%)
+    Sina实测: 800只/批×0.3s, 2652只≈1s
+    """
     try:
         from hikyuu.interactive import sm, Query
         from app.factors import compute_factor_scores
@@ -110,8 +118,7 @@ def get_tracked_symbols():
                 stocks.extend(list(market_stocks))
             except: pass
         scores = compute_factor_scores(stocks, Query(-30))
-        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        return [code for code, _ in ranked[:TRACKED_COUNT]]
+        return [code for code, sc in scores.items() if sc > MIN_FACTOR_SCORE]
     except Exception as e:
         print(f"  [warn] 因子池: {e}")
         return ['SH600000', 'SZ000001', 'SH600036', 'SZ000002', 'SH600519']
@@ -263,7 +270,7 @@ def main():
 
     print("  加载因子候选池...")
     tracked = get_tracked_symbols()
-    print(f"  监控池: {len(tracked)}只 (因子 Top{TRACKED_COUNT})")
+    print(f"  监控池: {len(tracked)}只 (因子得分>{MIN_FACTOR_SCORE})")
 
     if ARGS.live:
         while True:
