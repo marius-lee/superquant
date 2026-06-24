@@ -59,20 +59,18 @@ th { color:#8b949e; font-weight:500; }
 <div class="row">
   <div class="col">
     <div class="card">
-      <div class="metric-label">🎯 今日候选池 (L1→L5 五层筛选)</div>
-      <div id="candidate-layers">
-        <div style="color:#8b949e;font-size:12px">待9:25集合竞价数据...</div>
-      </div>
-      <div id="candidate-final" style="margin-top:8px;font-size:12px;color:#ffd700"></div>
+      <div class="metric-label">🎯 ML 涨停预测 (XGBoost AUC=0.96)</div>
+      <div id="candidate-info" style="font-size:12px;color:#8b949e">加载中...</div>
+      <table id="candidate-table" style="margin-top:4px">
+        <thead><tr><th>#</th><th>股票</th><th>P(涨停)</th></tr></thead>
+        <tbody><tr><td colspan=3>待模型运行...</td></tr></tbody>
+      </table>
     </div>
   </div>
   <div class="col">
     <div class="card">
-      <div class="metric-label">📋 持仓 <span style="font-size:11px;color:#8b949e">(止损基线: <span id="stop-base">5%</span>)</span></div>
-      <table>
-        <thead><tr><th>股票</th><th>成本</th><th>股数</th><th>原因</th></tr></thead>
-        <tbody id="positions-body"><tr><td colspan=4>无持仓</td></tr></tbody>
-      </table>
+      <div class="metric-label">📊 数据回补 (L3资金流)</div>
+      <div id="l3-info" style="font-size:12px;color:#8b949e">加载中...</div>
     </div>
   </div>
 </div>
@@ -89,11 +87,11 @@ th { color:#8b949e; font-weight:500; }
   </div>
   <div class="col">
     <div class="card">
-      <div class="metric-label">⚙️ 策略信息</div>
+      <div class="metric-label">⚙️ 系统状态</div>
       <div style="font-size:12px;color:#8b949e">
-        策略: 五层筛选 (竞价→技术→资金→龙虎→板块)<br>
-        数据: Sina(免费) + AData(免费) + HDF5分钟线<br>
-        执行间隔: 5秒 | 来源: quant实测
+        策略: XGBoost (26特征, AUC=0.96)<br>
+        数据: Sina + easy-tdx + HDF5 + AKShare (全免费)<br>
+        扫描: 5s | ML每日自动更新
       </div>
     </div>
   </div>
@@ -105,33 +103,37 @@ function $(id){return document.getElementById(id);}
 
 async function refresh() {
   try {
-    const [state, candidates, northstar, positions, trades] = await Promise.all([
+    const [state, candidates, northstar, positions, trades, l3] = await Promise.all([
       fetch(API+'/api/state').then(r=>r.json()),
       fetch(API+'/api/candidates').then(r=>r.json()),
       fetch(API+'/api/northstar').then(r=>r.json()),
       fetch(API+'/api/positions').then(r=>r.json()),
       fetch(API+'/api/trades').then(r=>r.json()),
+      fetch(API+'/api/l3-progress').then(r=>r.json()),
     ]);
     $('equity').textContent='¥'+state.equity.toLocaleString();
     $('cash').textContent='¥'+state.cash.toLocaleString();
     $('npos').textContent=state.n_positions;
-    $('stop-base').textContent=Math.round((state.stop_base||0.05)*100)+'%';
     if(northstar&&northstar.progress_pct!=null){
       $('northstar-pct').textContent=northstar.progress_pct.toFixed(1)+'%';
       $('northstar-bar').style.width=Math.min(northstar.progress_pct,100)+'%';
       $('ns-remaining').textContent='¥'+Math.round(northstar.remaining||0).toLocaleString();
     }
-    // 候选池
-    if(candidates&&candidates.layers){
+    // ML候选
+    if(candidates&&candidates.candidates&&candidates.candidates.length>0){
+      $('candidate-info').textContent=candidates.date+' | '+candidates.count+'只候选 | '+candidates.model;
       let html='';
-      candidates.layers.forEach(l=>{
-        let badge=l.count>0?'badge-active':'badge-pending';
-        html+='<div class="layer-item"><span>'+l.name+'</span><span style="font-size:11px;color:#8b949e">'+l.threshold+'</span><span class="layer-count '+badge+'">'+l.count+'</span></div>';
+      candidates.candidates.forEach((c,i)=>{
+        let cls=c.prob>0.98?'up':c.prob>0.95?'badge-active':'';
+        html+='<tr><td>'+(i+1)+'</td><td>'+c.symbol+'</td><td class="'+cls+'">'+(c.prob*100).toFixed(1)+'%</td></tr>';
       });
-      $('candidate-layers').innerHTML=html;
-      if(candidates.final&&candidates.final.length>0){
-        $('candidate-final').textContent='最终候选: '+candidates.final.join(', ');
-      }
+      $('candidate-table').querySelector('tbody').innerHTML=html;
+    } else {
+      $('candidate-info').textContent='待运行 ml/predict.py';
+    }
+    // L3进度
+    if(l3){
+      $('l3-info').innerHTML='状态: '+l3.status+' | 覆盖: '+l3.days+'天/'+l3.rows+'条<br>'+l3.date_range+' | '+l3.last_log;
     }
     // 持仓
     if(positions.length>0){

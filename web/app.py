@@ -1,11 +1,12 @@
-"""superquant Web — 攻击性涨停捕捉监控面板。
+"""superquant Web — ML 驱动的涨停预测监控面板。
 
 API:
-  /api/state         — 实时状态 (资金/持仓/候选)
-  /api/candidates    — 今日候选池 (L1-L5筛选结果)
-  /api/paper-account — 模拟账户摘要
+  /api/state         — 实时状态 (资金/持仓)
+  /api/candidates    — ML 预测 Top20 候选 + 概率
+  /api/l3-progress   — L3 资金流回补进度
+  /api/paper-account — 模拟账户
   /api/northstar     — 北极星进度
-  /api/positions     — 当前持仓
+  /api/positions     — 持仓
   /api/trades        — 交易记录
   /                  — 主页面
 """
@@ -20,6 +21,7 @@ sys.path.insert(0, SUPERQUANT_ROOT)
 sys.path.insert(0, QUANT_ROOT)
 
 TRADE_DB = os.path.join(QUANT_ROOT, "data", "trades.db")
+CANDIDATE_FILE = os.path.join(SUPERQUANT_ROOT, "pre_market", "candidate.json")
 ACTIVE_PARAMS = os.path.join(SUPERQUANT_ROOT, "config", "active_params.json")
 INITIAL_CAPITAL = 5000.0
 
@@ -88,25 +90,45 @@ def _get_trades(limit=10):
 
 
 def _get_candidates():
-    """获取今日候选池状态。L1-L5 筛选进度。"""
-    today = date.today().isoformat()
+    """从 ML 预测结果读取今日候选。"""
+    if os.path.exists(CANDIDATE_FILE):
+        try:
+            with open(CANDIDATE_FILE) as f:
+                data = json.load(f)
+                cands = data.get('candidates', [])
+                return {
+                    'date': data.get('date', date.today().isoformat()),
+                    'count': len(cands),
+                    'model': 'XGBoost (AUC=0.96)',
+                    'candidates': [{'symbol': c['symbol'], 'prob': c['prob']} for c in cands[:10]],
+                }
+        except Exception:
+            pass
+    return {'date': date.today().isoformat(), 'count': 0, 'model': '待运行', 'candidates': []}
+
+
+def _get_l3_progress():
+    """读取 L3 资金流回补进度。"""
+    log_file = os.path.join(SUPERQUANT_ROOT, 'ml', 'build_features.log')
+    if not os.path.exists(log_file):
+        return {'status': '未启动', 'last_line': ''}
     try:
-        # 从内存/缓存读取 (暂时回退到 Hikyuu 基础数据)
-        from hikyuu.interactive import sm
-        # 简化: 返回候选池统计框架，待 pre_market_scanner 实现后填充
+        with open(log_file) as f:
+            lines = f.readlines()
+        last_lines = [l.strip() for l in lines[-5:] if 'L3' in l or '全部完成' in l or 'ERROR' in l]
+        # 统计 DB 中的 L3 数据量
+        conn = sqlite3.connect(os.path.join(QUANT_ROOT, 'data', 'market.db'))
+        row = conn.execute("SELECT COUNT(DISTINCT date) as days, COUNT(*) as rows, MIN(date), MAX(date) FROM daily_features WHERE main_net_in IS NOT NULL").fetchone()
+        conn.close()
         return {
-            'date': today,
-            'layers': [
-                {'name': 'L1 竞价筛选', 'count': 0, 'threshold': 'gap≥2%, 竞价量>昨量×5%'},
-                {'name': 'L2 技术形态', 'count': 0, 'threshold': 'KSFT+SLOPE+PTC'},
-                {'name': 'L3 资金流', 'count': 0, 'threshold': 'AData 大单净买入>0'},
-                {'name': 'L4 龙虎榜', 'count': 0, 'threshold': '昨日上榜+游资买入'},
-                {'name': 'L5 板块共振', 'count': 0, 'threshold': '板块≥3涨停'},
-            ],
-            'final': [],  # 最终候选
+            'status': '运行中' if any('完成' not in l for l in last_lines[:1]) else '待机',
+            'days': row[0] if row else 0,
+            'rows': row[1] if row else 0,
+            'date_range': f"{row[2]}~{row[3]}" if row and row[2] else '无',
+            'last_log': last_lines[-1] if last_lines else '',
         }
     except Exception:
-        return {'date': today, 'layers': [], 'final': []}
+        return {'status': '错误', 'last_line': ''}
 
 
 # ═══════════════════════════════════════════════════════════
@@ -124,6 +146,7 @@ def api_state():
     positions = _get_positions()
     trades = _get_trades(5)
     params = _load_json(ACTIVE_PARAMS, {})
+    cands = _get_candidates()
     return jsonify({
         'cash': account['cash'],
         'equity': account['equity'],
@@ -131,14 +154,19 @@ def api_state():
         'n_positions': len(positions),
         'n_signals': len(trades),
         'initial_capital': INITIAL_CAPITAL,
-        'stop_base': params.get('stops', {}).get('adaptive_stop_base', 0.05),
-        'candidates': _get_candidates()['final'],
+        'ml_candidates': len(cands.get('candidates', [])),
+        'ml_date': cands.get('date', ''),
     })
 
 
 @app.route('/api/candidates')
 def api_candidates():
     return jsonify(_get_candidates())
+
+
+@app.route('/api/l3-progress')
+def api_l3_progress():
+    return jsonify(_get_l3_progress())
 
 
 @app.route('/api/paper-account')
