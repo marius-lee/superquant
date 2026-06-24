@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>superquant — 自主交易代理</title>
+<title>superquant — 攻击性涨停捕捉</title>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family: -apple-system, 'SF Mono', monospace; background:#0d1117; color:#c9d1d9; padding:16px; }
@@ -19,17 +19,20 @@ th { color:#8b949e; font-weight:500; }
 .badge { display:inline-block; padding:2px 8px; border-radius:12px; font-size:11px; }
 .badge-buy { background:#e1524133; color:#e15241; }
 .badge-sell { background:#4caf5033; color:#4caf50; }
+.badge-active { background:#ffd70033; color:#ffd700; }
+.badge-pending { background:#58a6ff33; color:#58a6ff; }
 .metric { font-size:24px; font-weight:bold; }
 .metric-label { font-size:11px; color:#8b949e; }
 .progress-bar { height:20px; background:#21262d; border-radius:10px; overflow:hidden; margin:8px 0; }
 .progress-fill { height:100%; background:linear-gradient(90deg,#e15241,#f0883e); transition:width 0.5s; }
-.factor-high { color:#e15241; } .factor-mid { color:#f0883e; } .factor-low { color:#4caf50; }
 #status { color:#8b949e; font-size:11px; }
+.layer-item { display:flex; justify-content:space-between; align-items:center; padding:4px 0; border-bottom:1px solid #21262d; font-size:13px; }
+.layer-count { font-weight:bold; }
 </style>
 </head>
 <body>
 
-<h2>🚀 superquant — 自主交易代理</h2>
+<h2>🚀 superquant — 攻击性涨停捕捉</h2>
 <div id="status">加载中...</div>
 
 <div class="row">
@@ -38,16 +41,16 @@ th { color:#8b949e; font-weight:500; }
       <div class="metric-label">💰 模拟账户</div>
       <div class="metric" id="equity">¥5,000</div>
       <div style="font-size:12px;color:#8b949e">
-        可用: <span id="cash">¥5,000</span> | 持仓: <span id="npos">0</span>/3
+        可用: <span id="cash">¥5,000</span> | 持仓: <span id="npos">0</span>只
       </div>
     </div>
   </div>
   <div class="col">
     <div class="card">
-      <div class="metric-label">🎯 北极星进度 (¥5,000 → ¥1,000,000)</div>
+      <div class="metric-label">🎯 北极星进度</div>
       <div class="progress-bar"><div class="progress-fill" id="northstar-bar" style="width:0%"></div></div>
       <div style="font-size:12px;color:#8b949e">
-        进度: <span id="northstar-pct">0%</span> | 日均目标+2.1% | 距目标<span id="ns-remaining">¥995,000</span>
+        进度: <span id="northstar-pct">0%</span> | 距目标 <span id="ns-remaining">¥995,000</span>
       </div>
     </div>
   </div>
@@ -56,31 +59,25 @@ th { color:#8b949e; font-weight:500; }
 <div class="row">
   <div class="col">
     <div class="card">
-      <div class="metric-label">⚙️ 策略参数 (自动调整)</div>
-      <div style="font-size:12px">
-        因子权重: <span id="weights">等权</span><br>
-        止损基线: <span id="stop-base">5%</span> | Kelly胜率: <span id="kelly-wr">55%</span>
+      <div class="metric-label">🎯 今日候选池 (L1→L5 五层筛选)</div>
+      <div id="candidate-layers">
+        <div style="color:#8b949e;font-size:12px">待9:25集合竞价数据...</div>
       </div>
+      <div id="candidate-final" style="margin-top:8px;font-size:12px;color:#ffd700"></div>
     </div>
   </div>
   <div class="col">
     <div class="card">
-      <div class="metric-label">📊 今日因子截面 Top 10</div>
-      <table id="factor-table"><tr><td>加载中...</td></tr></table>
-    </div>
-  </div>
-</div>
-
-<div class="row">
-  <div class="col">
-    <div class="card">
-      <div class="metric-label">📋 当前持仓</div>
+      <div class="metric-label">📋 持仓 <span style="font-size:11px;color:#8b949e">(止损基线: <span id="stop-base">5%</span>)</span></div>
       <table>
-        <thead><tr><th>股票</th><th>成本</th><th>模式</th><th>股数</th></tr></thead>
+        <thead><tr><th>股票</th><th>成本</th><th>股数</th><th>原因</th></tr></thead>
         <tbody id="positions-body"><tr><td colspan=4>无持仓</td></tr></tbody>
       </table>
     </div>
   </div>
+</div>
+
+<div class="row">
   <div class="col">
     <div class="card">
       <div class="metric-label">📝 最近交易</div>
@@ -90,82 +87,74 @@ th { color:#8b949e; font-weight:500; }
       </table>
     </div>
   </div>
+  <div class="col">
+    <div class="card">
+      <div class="metric-label">⚙️ 策略信息</div>
+      <div style="font-size:12px;color:#8b949e">
+        策略: 五层筛选 (竞价→技术→资金→龙虎→板块)<br>
+        数据: Sina(免费) + AData(免费) + HDF5分钟线<br>
+        执行间隔: 5秒 | 来源: quant实测
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
-const API = '';
-function $(id) { return document.getElementById(id); }
+const API='';
+function $(id){return document.getElementById(id);}
 
 async function refresh() {
   try {
-    // 并行拉取所有API
-    const [state, factors, northstar, positions, trades] = await Promise.all([
+    const [state, candidates, northstar, positions, trades] = await Promise.all([
       fetch(API+'/api/state').then(r=>r.json()),
-      fetch(API+'/api/factors').then(r=>r.json()),
+      fetch(API+'/api/candidates').then(r=>r.json()),
       fetch(API+'/api/northstar').then(r=>r.json()),
       fetch(API+'/api/positions').then(r=>r.json()),
       fetch(API+'/api/trades').then(r=>r.json()),
     ]);
-
-    // 账户
-    $('equity').textContent = '¥'+state.equity.toLocaleString();
-    $('cash').textContent = '¥'+state.cash.toLocaleString();
-    $('npos').textContent = state.n_positions;
-
-    // 北极星
-    if (northstar && northstar.progress_pct != null) {
-      $('northstar-pct').textContent = northstar.progress_pct.toFixed(1)+'%';
-      $('northstar-bar').style.width = Math.min(northstar.progress_pct, 100)+'%';
-      $('ns-remaining').textContent = '¥'+Math.round(northstar.remaining||0).toLocaleString();
+    $('equity').textContent='¥'+state.equity.toLocaleString();
+    $('cash').textContent='¥'+state.cash.toLocaleString();
+    $('npos').textContent=state.n_positions;
+    $('stop-base').textContent=Math.round((state.stop_base||0.05)*100)+'%';
+    if(northstar&&northstar.progress_pct!=null){
+      $('northstar-pct').textContent=northstar.progress_pct.toFixed(1)+'%';
+      $('northstar-bar').style.width=Math.min(northstar.progress_pct,100)+'%';
+      $('ns-remaining').textContent='¥'+Math.round(northstar.remaining||0).toLocaleString();
     }
-
-    // 策略参数
-    if (state && state.weights && Object.keys(state.weights).length > 0) {
-      $('weights').textContent = JSON.stringify(state.weights);
-    }
-    if (state) {
-      $('stop-base').textContent = Math.round((state.stop_base||0.05)*100)+'%';
-      $('kelly-wr').textContent = Math.round((state.kelly_win_rate||0.55)*100)+'%';
-    }
-
-    // 因子
-    if (factors && factors.top && factors.top.length > 0 && factors.top[0].symbol) {
-      let html = '';
-      factors.top.slice(0,10).forEach((f,i) => {
-        let cls = (f.score||0) > 0.5 ? 'factor-high' : (f.score||0) < -0.5 ? 'factor-low' : 'factor-mid';
-        html += '<tr><td>'+(i+1)+'. '+f.symbol+'</td><td>'+(f.name||'?')+'</td><td class="'+cls+'">'+(f.score||0).toFixed(2)+'</td></tr>';
+    // 候选池
+    if(candidates&&candidates.layers){
+      let html='';
+      candidates.layers.forEach(l=>{
+        let badge=l.count>0?'badge-active':'badge-pending';
+        html+='<div class="layer-item"><span>'+l.name+'</span><span style="font-size:11px;color:#8b949e">'+l.threshold+'</span><span class="layer-count '+badge+'">'+l.count+'</span></div>';
       });
-      $('factor-table').innerHTML = html;
+      $('candidate-layers').innerHTML=html;
+      if(candidates.final&&candidates.final.length>0){
+        $('candidate-final').textContent='最终候选: '+candidates.final.join(', ');
+      }
     }
-
     // 持仓
-    if (positions.length > 0) {
-      let html = '';
-      positions.forEach(p => {
-        html += `<tr><td>${p.symbol}</td><td>¥${p.price}</td><td><span class="badge badge-buy">${p.reason}</span></td><td>${p.shares}</td></tr>`;
-      });
-      $('positions-body').innerHTML = html;
+    if(positions.length>0){
+      let html='';
+      positions.forEach(p=>{html+='<tr><td>'+p.symbol+'</td><td>¥'+p.price+'</td><td>'+p.shares+'</td><td><span class="badge badge-buy">'+p.reason+'</span></td></tr>';});
+      $('positions-body').innerHTML=html;
     }
-
     // 交易
-    if (trades.length > 0) {
-      let html = '';
-      trades.slice(0,10).forEach(t => {
-        let sideCls = t.side === 'buy' ? 'buy' : 'sell';
-        let pnlCls = (t.pnl||0) > 0 ? 'up' : 'down';
-        html += `<tr><td>${(t.time||t.date).slice(0,19)}</td><td>${t.symbol}</td><td class="${sideCls}">${t.side}</td><td>¥${t.price}</td><td class="${pnlCls}">${(t.pnl||0).toFixed(0)}</td><td>${t.reason||''}</td></tr>`;
+    if(trades.length>0){
+      let html='';
+      trades.slice(0,10).forEach(t=>{
+        let sideCls=t.side==='buy'?'buy':'sell';
+        let pnlCls=(t.pnl||0)>0?'up':'down';
+        html+='<tr><td>'+(t.time||t.date).slice(0,19)+'</td><td>'+t.symbol+'</td><td class="'+sideCls+'">'+t.side+'</td><td>¥'+t.price+'</td><td class="'+pnlCls+'">'+(t.pnl||0).toFixed(0)+'</td><td>'+t.reason+'</td></tr>';
       });
-      $('trades-body').innerHTML = html;
+      $('trades-body').innerHTML=html;
     }
-
-    $('status').textContent = '✅ 实时 ' + new Date().toLocaleTimeString();
-  } catch(e) {
-    $('status').textContent = '❌ 连接失败: ' + e.message;
+    $('status').textContent='✅ 实时 '+new Date().toLocaleTimeString();
+  }catch(e){
+    $('status').textContent='❌ '+e.message;
   }
 }
-
-refresh();
-setInterval(refresh, 10000); // 每10秒刷新
+refresh();setInterval(refresh,10000);
 </script>
 </body>
 </html>
