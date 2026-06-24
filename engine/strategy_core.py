@@ -56,48 +56,43 @@ def count_boards(closes, idx):
     return board
 
 
-def load_optimal_thresholds():
-    """加载数据驱动的最优阈值。若无则返回手写基线。
-
-    优先级: optimal_thresholds.json > 手写基线 (来源: 17次搜索交叉验证)
-    """
-    config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config')
-    path = os.path.join(config_dir, 'optimal_thresholds.json')
-    if os.path.exists(path):
-        try:
-            with open(path) as f:
-                return json.load(f)
-        except Exception:
-            pass
-    # 手写基线 (来源: chen-xiaoqun-final-signal-design.md)
-    return {
-        'gap_min': 2.0, 'gap_max': 5.0, 'vol_ratio': 3.0,
-        'daily_ret': 5.0, 'turnover_min': 0.10, 'turnover_max': 0.30,
-        'gap_fanbao': 3.0, 'vol_ratio_lianban': 0.67,
+def load_params_for_mode(mode):
+    """从 DB 加载单模式参数。来源: DB strategy_params 表 → 手写基线回退。"""
+    try:
+        from engine.db_schema import load_params
+        p = load_params(mode)
+        if p: return p
+    except Exception:
+        pass
+    # 手写基线回退 (来源: chen-xiaoqun-final-signal-design.md, 17次搜索交叉验证)
+    defaults = {
+        'S1_弱转强': {'gap_min':2.0,'gap_max':5.0,'vol_ratio':3.0,'daily_ret':5.0},
+        'S2_首阴反包': {'gap_min':3.0,'gap_max':10.0,'vol_ratio':0.0,'daily_ret':0.0,'turnover_min':0.10,'turnover_max':0.30},
+        'S3_连板接力': {'gap_min':0.0,'gap_max':10.0,'vol_ratio':0.67,'daily_ret':0.0,'turnover_min':0.10,'turnover_max':1.0,'min_boards':2},
+        'S4_首板试探': {'gap_min':2.0,'gap_max':10.0,'vol_ratio':0.0,'daily_ret':0.0,'turnover_min':0.10,'turnover_max':1.0,'min_boards':1},
     }
+    return defaults.get(mode, {})
 
 
 def detect_signals(kdata_records, params=None):
-    """陈小群模式识别 — 纯函数实现。
+    """陈小群模式识别 — 纯函数，参数全部来自 DB。
 
     Args:
-        kdata_records: K线记录列表, 每项 (datetime, open, high, low, close, volume)
-        params: 信号参数 dict, None=自动加载最优阈值
+        kdata_records: K线记录列表, 每项(datetime,open,high,low,close,volume)
+        params: None=自动从DB加载各模式参数, 也可传入dict覆盖
 
-    Returns:
-        [(datetime, signal_type, score), ...]
+    Returns: [(datetime, signal_type, score), ...]
 
-    来源: 手写基线 → engine/threshold_optimizer.py 数据驱动优化
+    参数来源链: DB strategy_params → 手写基线 → 代码默认值
+    优化机制: engine/threshold_optimizer.py 定期更新 DB
     """
-    if params is None or not params:
-        params = load_optimal_thresholds()
-    gap_min = params.get('gap_min', 2.0)
-    gap_max = params.get('gap_max', 5.0)
-    vol_ratio_min = params.get('vol_ratio', 3.0)
-    turnover_min = params.get('turnover_min', 0.10)
-    turnover_max = params.get('turnover_max', 0.30)
-    gap_fanbao = params.get('gap_fanbao', 3.0)
-    vol_ratio_lianban = params.get('vol_ratio_lianban', 0.67)
+    if params is None:
+        p1 = load_params_for_mode('S1_弱转强')
+        p2 = load_params_for_mode('S2_首阴反包')
+        p3 = load_params_for_mode('S3_连板接力')
+        p4 = load_params_for_mode('S4_首板试探')
+    else:
+        p1 = p2 = p3 = p4 = params
 
     signals = []
     n = len(kdata_records)
@@ -119,24 +114,28 @@ def detect_signals(kdata_records, params=None):
         turnover = vol / 10000.0
         broken = is_broken_board(phi, pcl, pop)
 
-        # S1: 弱转强 (0.90)
-        if broken and gap_min <= gap <= gap_max and vol_ratio >= vol_ratio_min and daily_ret >= 5.0:
+        # S1: 弱转强 (p1 parameters)
+        if broken and gap >= p1.get('gap_min',2.0) and gap <= p1.get('gap_max',5.0) \
+           and vol_ratio >= p1.get('vol_ratio',3.0) and daily_ret >= p1.get('daily_ret',5.0):
             signals.append((dt, '弱转强', 0.90))
             continue
 
-        # S2: 首阴反包 (0.85)
-        if broken and gap >= gap_fanbao and turnover_min <= turnover <= turnover_max:
+        # S2: 首阴反包 (p2 parameters)
+        if broken and gap >= p2.get('gap_min',3.0) \
+           and turnover >= p2.get('turnover_min',0.10) and turnover <= p2.get('turnover_max',0.30):
             signals.append((dt, '首阴反包', 0.85))
             continue
 
-        # S3: 连板接力 (0.70)
+        # S3: 连板接力 (p3 parameters)
         board = count_boards(closes, i)
-        if board >= 2 and turnover >= turnover_min and vol_ratio >= vol_ratio_lianban:
+        if board >= p3.get('min_boards',2) and turnover >= p3.get('turnover_min',0.10) \
+           and vol_ratio >= p3.get('vol_ratio',0.67):
             signals.append((dt, '连板接力', 0.70))
             continue
 
-        # S4: 首板试探 (0.30)
-        if board == 1 and turnover >= turnover_min and gap > 2.0:
+        # S4: 首板试探 (p4 parameters)
+        if board == p4.get('min_boards',1) and turnover >= p4.get('turnover_min',0.10) \
+           and gap > p4.get('gap_min',2.0):
             signals.append((dt, '首板试探', 0.30))
 
     return signals

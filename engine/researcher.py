@@ -104,31 +104,17 @@ def run_research():
     print(f"  权重: {weights}")
 
     # ── 3. 信号参数网格搜索 ──
-    print("\n[3/4] 信号参数优化 (方案A: 数据驱动阈值)")
+    print("\n[3/4] 信号参数优化 (方案A: 全模式数据驱动 → DB)")
     try:
-        from engine.threshold_optimizer import fetch_events, grid_search, DB_PATH as T_DB
-        import sqlite3 as _sql
-        conn = _sql.connect(T_DB)
-        # 全量扫描: 所有股票 (5532只, 耗时~38s)
-        syms = [r[0] for r in conn.execute(
-            "SELECT DISTINCT symbol FROM daily ORDER BY symbol"
-        ).fetchall()]
-        events = fetch_events(conn, syms)
-        conn.close()
-        if len(events) > 100:
-            best = grid_search(events)
-            if best:
-                param_updates = best
-                print(f"  最优: gap_min={best['gap_min']}, vol_ratio={best['vol_ratio']}, daily_ret={best['daily_ret']}")
-                print(f"  胜率={best['win_rate']*100:.0f}%, 样本={best['n_samples']}")
-            else:
-                param_updates = {}
-                print(f"  样本不足, 保持手写参数")
-        else:
-            param_updates = {}
-            print(f"  事件不足 ({len(events)}), 保持手写参数")
+        from engine.threshold_optimizer import main as opt_main
+        import sys as _sys
+        old_argv = _sys.argv
+        _sys.argv = ['threshold_optimizer']
+        opt_main()
+        _sys.argv = old_argv
+        param_updates = {'source': 'DB strategy_params (data_driven)'}
     except Exception as e:
-        param_updates = {}
+        param_updates = {'error': str(e)}
         print(f"  [warn] 阈值优化失败: {e}")
 
     # ── 4. Kelly参数更新 ──

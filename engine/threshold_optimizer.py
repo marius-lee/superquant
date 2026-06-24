@@ -1,218 +1,197 @@
 #!/usr/bin/env python3
-"""方案 A: 数据驱动阈值优化 — 从历史数据学习最优信号参数。
+"""全模式数据驱动阈值优化 — 采样策略, 向量化搜索。
 
-方法:
-  1. 全市场扫描"炸板次日"事件 (16M日线)
-  2. 提取特征: gap(高开%), vol_ratio(量比), daily_ret(日涨幅%), turnover(换手)
-  3. 标签: 次N日最高涨幅是否 ≥ 3% (可配置)
-  4. 网格搜索: 找最优阈值组合最大化胜率×盈亏比
-
-输出: config/optimal_thresholds.json
+策略: 随机采样 N 只股票 → 快速优化 → DB 更新
+  日常(每日): N=500 (~60s)
+  全量(每周): N=ALL (~10min)
 
 用法:
-  python engine/threshold_optimizer.py          # 全量分析
-  python engine/threshold_optimizer.py --dry    # 采样100只快速验证
+  python engine/threshold_optimizer.py                # 日常采样
+  python engine/threshold_optimizer.py --full         # 全量扫描
+  python engine/threshold_optimizer.py --sample 200   # 自定义采样数
 """
 
-import os, sys, json, time, math, sqlite3, argparse
-from collections import defaultdict
+import os, sys, time, sqlite3, argparse, json, random
 import numpy as np
 
 SUPERQUANT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QUANT_ROOT = os.path.expanduser("~/project/quant")
 DB_PATH = os.path.join(QUANT_ROOT, "data", "market.db")
-OUTPUT_FILE = os.path.join(SUPERQUANT_ROOT, "config", "optimal_thresholds.json")
+TARGET_RETURN = 0.03; FORWARD_DAYS = 3; MIN_SAMPLE = 20
 
-# ── 可配置参数 ──
-TARGET_RETURN = 0.03        # 标签: 次N日最高涨幅≥3% 为正样本
-FORWARD_DAYS = 3            # 前看天数
-LIMIT_UP_THRESHOLD = 0.095  # 涨停阈值 (9.5% 近似 10% 含容差)
-MIN_SAMPLE = 20             # 每组最少样本数
-
-
-def fetch_events(conn, limit_symbols=None):
-    """全市场扫描炸板次日事件。
-
-    Returns: [(gap, vol_ratio, daily_ret, turnover, label), ...]
-    """
-    print("  扫描炸板次日事件...")
+def fetch_events_bulk(conn, symbols):
+    """Bulk fetch: single SQL query, group in Python. Much faster than per-stock queries."""
+    sym_set = set(symbols)
+    print(f"  读取 {len(sym_set)} 只股票日线...")
     t0 = time.time()
+    rows = conn.execute(
+        "SELECT symbol, open, high, low, close, volume FROM daily WHERE symbol IN ({}) ORDER BY symbol, date".format(
+            ','.join(f"'{s}'" for s in sorted(sym_set))
+        )
+    ).fetchall()
+    t1 = time.time()
+    print(f"  读取: {len(rows)}行, {t1-t0:.0f}s")
 
-    # 获取股票列表
-    if limit_symbols:
-        symbols = limit_symbols
-    else:
-        symbols = [r[0] for r in conn.execute(
-            "SELECT DISTINCT symbol FROM daily ORDER BY symbol"
-        ).fetchall()]
+    broken = []; boards = []; single = []
+    prev_sym = None; buffer = []
+    for r in rows:
+        sym = r[0]; vals = r[1:]
+        if sym != prev_sym:
+            if prev_sym is not None and len(buffer) >= 8:
+                for j in range(2, len(buffer) - FORWARD_DAYS):
+                    p = buffer[j-1]; c = buffer[j]
+                    if p[3] <= 0 or c[0] <= 0: continue
+                    gap = (c[0]/p[3]-1)*100; vr = c[4]/max(p[4],1)
+                    dr = (c[3]/p[3]-1)*100; to = c[4]/10000.0
+                    fh = max(r[2] for r in buffer[j:j+FORWARD_DAYS])
+                    lb = 1 if (fh/c[3]-1) >= TARGET_RETURN else 0
+                    lp = round(p[0]*1.10, 2)
+                    if p[1] >= lp*0.995 and p[3] < p[1]*0.995:
+                        broken.append((gap, vr, dr, to, lb))
+                    cls = [r[3] for r in buffer[:j+1]]; nb = 1
+                    for k in range(len(cls)-1, 0, -1):
+                        if cls[k-1] > 0 and (cls[k]/cls[k-1]-1) >= 0.095: nb += 1
+                        else: break
+                    if nb >= 2: boards.append((nb, vr, to, gap, lb))
+                    elif nb == 1 and to >= 0.10: single.append((vr, to, gap, lb))
+            buffer = [vals]; prev_sym = sym
+        else:
+            buffer.append(vals)
+    # last
+    if len(buffer) >= 8:
+        for j in range(2, len(buffer) - FORWARD_DAYS):
+            p = buffer[j-1]; c = buffer[j]
+            if p[3] <= 0 or c[0] <= 0: continue
+            gap = (c[0]/p[3]-1)*100; vr = c[4]/max(p[4],1)
+            dr = (c[3]/p[3]-1)*100; to = c[4]/10000.0
+            fh = max(r[2] for r in buffer[j:j+FORWARD_DAYS])
+            lb = 1 if (fh/c[3]-1) >= TARGET_RETURN else 0
+            lp = round(p[0]*1.10, 2)
+            if p[1] >= lp*0.995 and p[3] < p[1]*0.995:
+                broken.append((gap, vr, dr, to, lb))
 
-    events = []
-    total_processed = 0
-
-    for sym in symbols:
-        rows = conn.execute(
-            "SELECT date, open, high, low, close, volume, amount FROM daily "
-            "WHERE symbol=? ORDER BY date", (sym,)
-        ).fetchall()
-
-        if len(rows) < FORWARD_DAYS + 3:
-            continue
-
-        for i in range(1, len(rows) - FORWARD_DAYS):
-            prev = rows[i-1]
-            curr = rows[i]
-
-            if prev[4] <= 0 or curr[1] <= 0:
-                continue
-
-            # 判断前日是否炸板
-            prev_open = prev[1]
-            prev_high = prev[2]
-            prev_close = prev[4]
-            limit_price = round(prev_open * 1.10, 2)
-            touched_limit = prev_high >= limit_price * 0.995
-            did_not_hold = prev_close < prev_high * 0.995
-
-            if not (touched_limit and did_not_hold):
-                continue
-
-            # 提取特征
-            gap = (curr[1] / prev_close - 1) * 100
-            vol_ratio = curr[5] / max(prev[5], 1)
-            daily_ret = (curr[4] / prev_close - 1) * 100
-            turnover = curr[5] / 10000.0
-
-            # 计算标签: 次 N 日最高涨幅
-            forward_high = max(r[2] for r in rows[i:i+FORWARD_DAYS])
-            label = 1 if (forward_high / curr[4] - 1) >= TARGET_RETURN else 0
-
-            events.append((gap, vol_ratio, daily_ret, turnover, label))
-
-        total_processed += 1
-        if total_processed % 500 == 0:
-            elapsed = time.time() - t0
-            print(f"    {total_processed}/{len(symbols)} ({len(events)}事件) {elapsed:.0f}s")
-
-    elapsed = time.time() - t0
-    print(f"  完成: {len(symbols)}只股票, {len(events)}个事件, {elapsed:.0f}s")
-    return events
+    e = time.time() - t0
+    print(f"  完成: 炸板{len(broken)}件, 连板{len(boards)}件, 首板{len(single)}件, {e:.0f}s")
+    return {'broken': broken, 'boards': boards, 'single': single}
 
 
-def grid_search(events):
-    """网格搜索最优阈值组合。
+def optimize_s1(broken):
+    """S1: 分位采样 + 向量化评分。"""
+    if len(broken) < MIN_SAMPLE: return None
+    a = np.array(broken); a = a[(a[:,0]>=-5)&(a[:,0]<=10)]
+    if len(a) < MIN_SAMPLE: return None
+    gs = [0.2, 0.4, 0.5, 1.0, 1.5, 2.0]
+    vs = [0.3, 0.5, 0.6, 1.0, 2.0, 3.0]
+    rs = [0.5, 1.0, 1.3, 1.5, 2.0, 3.0, 5.0]
+    best, best_sc = None, 0
+    for gm in gs:
+        for vm in vs:
+            for rm in rs:
+                sel = a[(a[:,0]>=gm)&(a[:,1]>=vm)&(a[:,2]>=rm)]
+                if len(sel) < MIN_SAMPLE: continue
+                pos = sel[sel[:,4]==1]
+                if len(pos) < MIN_SAMPLE/2: continue
+                neg = sel[sel[:,4]==0]
+                if len(neg) < 5: continue
+                wr = len(pos)/len(sel)
+                wl = np.mean(pos[:,2])/max(abs(np.mean(neg[:,2])),0.001)
+                sc = wr*wr*wl*np.log1p(len(sel))
+                if sc > best_sc:
+                    best_sc = sc
+                    best = {'gap_min': round(gm,2), 'vol_ratio': round(vm,2),
+                            'daily_ret': round(rm,2), 'wr': round(wr,3),
+                            'wl': round(wl,2), 'n': int(len(sel))}
+    return best
 
-    目标: max(胜率 × 胜率 × 盈亏比) → 既准又多
-    """
-    if len(events) < MIN_SAMPLE:
-        print(f"  [warn] 样本不足 ({len(events)} < {MIN_SAMPLE})")
-        return None
 
-    arr = np.array(events)
-    # 只保留 reasonable 范围
-    mask = (arr[:, 0] >= -5) & (arr[:, 0] <= 10) & (arr[:, 1] >= 0) & (arr[:, 1] <= 20)
-    arr = arr[mask]
-    print(f"  有效样本: {len(arr)} (过滤极端值)")
+def optimize_s2(broken):
+    """S2: 分位搜索 gap/turnover 区间。"""
+    if len(broken) < MIN_SAMPLE: return None
+    a = np.array(broken)
+    best, best_sc = None, 0
+    for gm in [1.0, 1.5, 2.0, 2.5, 3.0]:
+        for tl in [0.05, 0.10, 0.15]:
+            for th in [0.25, 0.30, 0.40, 0.50]:
+                sel = a[(a[:,0]>=gm)&(a[:,3]>=tl)&(a[:,3]<=th)]
+                if len(sel) < MIN_SAMPLE: continue
+                pos = sel[sel[:,4]==1]
+                if len(pos) < MIN_SAMPLE/2: continue
+                wr = len(pos)/len(sel)
+                sc = wr*wr*np.log1p(len(sel))
+                if sc > best_sc:
+                    best_sc = sc
+                    best = {'gap_min': gm, 'turnover_min': tl, 'turnover_max': th,
+                            'wr': round(wr,3), 'n': int(len(sel))}
+    return best
 
-    best_score = 0
-    best_params = {}
 
-    # 网格搜索
-    gaps = np.percentile(arr[arr[:, 0] > 0, 0], [25, 50, 75])
-    vols = np.percentile(arr[arr[:, 1] > 0, 1], [25, 50, 75])
-    rets = np.percentile(arr[arr[:, 2] > 0, 2], [25, 50, 75])
+def optimize_s3(boards):
+    if len(boards) < MIN_SAMPLE: return None
+    a = np.array(boards); pos = a[a[:,4]==1]
+    return {'n': len(a), 'wr': round(len(pos)/len(a),3),
+            'opt_vr': round(np.percentile(pos[:,1],25) if len(pos)>10 else 0.67,2)}
 
-    for gap_min in [1.0, 1.5] + list(gaps):
-        for vol_min in [1.5, 2.0] + list(vols):
-            for ret_min in [3.0, 5.0] + list(rets):
-                selected = arr[
-                    (arr[:, 0] >= gap_min) &
-                    (arr[:, 1] >= vol_min) &
-                    (arr[:, 2] >= ret_min)
-                ]
-                if len(selected) < MIN_SAMPLE:
-                    continue
 
-                pos = selected[selected[:, 4] == 1]
-                neg = selected[selected[:, 4] == 0]
-                n_pos = len(pos)
-                n_neg = len(neg)
-                total = n_pos + n_neg
-                wr = n_pos / total  # 胜率
+def optimize_s4(single):
+    if len(single) < MIN_SAMPLE: return None
+    a = np.array(single)
+    pos = a[a[:,3]==1] if a.shape[1] > 3 else a
+    return {'n': len(a), 'wr': round(len(pos)/len(a),3),
+            'min_to': round(np.percentile(np.abs(a[:,1]),25),2) if len(a)>10 else 0.10,
+            'min_gap': round(np.percentile(a[a[:,2]>0,2],25),2) if len(a[a[:,2]>0])>5 else 2.0}
 
-                if n_neg == 0:
-                    continue
-                avg_win = np.mean(pos[:, 2]) if n_pos > 0 else 0
-                avg_loss = abs(np.mean(neg[:, 2])) if n_neg > 0 else 1
-                wl_ratio = avg_win / max(avg_loss, 0.001)
 
-                # 综合分: 胜率² × 盈亏比 (prefer high WR with decent volume)
-                score = wr * wr * wl_ratio * math.log(total + 1)
-
-                if score > best_score:
-                    best_score = score
-                    best_params = {
-                        'gap_min': round(gap_min, 1),
-                        'vol_ratio': round(vol_min, 1),
-                        'daily_ret': round(ret_min, 1),
-                        'win_rate': round(wr, 3),
-                        'wl_ratio': round(wl_ratio, 2),
-                        'n_samples': total,
-                        'n_positive': n_pos,
-                    }
-
-    return best_params
+def save_to_db(mode, params):
+    if not params: return
+    from engine.db_schema import save_params
+    th = {k: v for k, v in params.items()
+          if not k.startswith('n_') and k not in ('wr', 'wl', 'opt_vr', 'min_to', 'min_gap')}
+    if th: save_params(mode, th, 'data_driven')
+    print(f"  {mode}: {params}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description='方案A: 阈值优化')
-    parser.add_argument('--dry', action='store_true', help='采样模式 (100只)')
-    ARGS = parser.parse_args()
+    p = argparse.ArgumentParser(description='全模式阈值优化')
+    p.add_argument('--full', action='store_true', help='全量扫描')
+    p.add_argument('--sample', type=int, default=500, help='采样数量 (默认500)')
+    ARGS = p.parse_args()
 
     print("=" * 60)
-    print("方案 A: 数据驱动阈值优化")
-    print(f"  目标: 次{FORWARD_DAYS}日涨幅≥{TARGET_RETURN*100:.0f}%")
+    print(f"全模式数据驱动阈值优化 (采样={ARGS.sample}{'全量' if ARGS.full else ''})")
     print("=" * 60)
 
+    random.seed(42)
     conn = sqlite3.connect(DB_PATH)
 
-    if ARGS.dry:
-        limit = [r[0] for r in conn.execute(
-            "SELECT DISTINCT symbol FROM daily ORDER BY RANDOM() LIMIT 100"
+    if ARGS.full:
+        syms = [r[0] for r in conn.execute(
+            "SELECT DISTINCT symbol FROM daily ORDER BY symbol"
         ).fetchall()]
-        print(f"  DRY RUN: {len(limit)}只采样")
-        events = fetch_events(conn, limit)
     else:
-        events = fetch_events(conn)
+        all_syms = [r[0] for r in conn.execute(
+            "SELECT DISTINCT symbol FROM daily ORDER BY symbol"
+        ).fetchall()]
+        syms = random.sample(all_syms, min(ARGS.sample, len(all_syms)))
 
+    events = fetch_events_bulk(conn, syms)
     conn.close()
 
-    if not events:
-        print("  无事件数据")
-        return
+    s1 = optimize_s1(events['broken'])
+    if s1:
+        save_to_db('S1_弱转强', s1)
+        with open(os.path.join(SUPERQUANT_ROOT, 'config', 'optimal_thresholds.json'), 'w') as f:
+            json.dump(s1, f, indent=2)
 
-    pos_count = sum(1 for e in events if e[4] == 1)
-    print(f"\n  事件总数: {len(events)}, 正样本({TARGET_RETURN*100:.0f}%+): {pos_count} ({pos_count/max(len(events),1)*100:.0f}%)")
+    s2 = optimize_s2(events['broken'])
+    if s2: save_to_db('S2_首阴反包', s2)
 
-    # 手写规则对照
-    manual = [e for e in events if 2.0 <= e[0] <= 5.0 and e[1] >= 3.0 and e[2] >= 5.0]
-    manual_pos = sum(1 for e in manual if e[4] == 1)
-    print(f"  手写规则: {len(manual)}个信号, 胜率={manual_pos/max(len(manual),1)*100:.0f}%")
+    s3 = optimize_s3(events['boards'])
+    if s3: save_to_db('S3_连板接力', s3)
 
-    # 网格搜索
-    print("\n  网格搜索最优阈值...")
-    best = grid_search(events)
-    if best:
-        print(f"\n  ✅ 最优参数:")
-        print(f"    gap_min={best['gap_min']}, vol_ratio={best['vol_ratio']}, daily_ret={best['daily_ret']}")
-        print(f"    胜率={best['win_rate']*100:.0f}%, 盈亏比={best['wl_ratio']:.1f}, 样本={best['n_samples']}")
+    s4 = optimize_s4(events['single'])
+    if s4: save_to_db('S4_首板试探', s4)
 
-        # 保存
-        os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
-        with open(OUTPUT_FILE, 'w') as f:
-            json.dump(best, f, indent=2, ensure_ascii=False)
-        print(f"    保存 → {OUTPUT_FILE}")
-    else:
-        print("  ⚠️ 样本不足, 保持手写规则")
+    print(f"\n✅ 优化完成 → {os.path.join(QUANT_ROOT, 'data', 'trades.db')} strategy_params")
 
 
 if __name__ == '__main__':
