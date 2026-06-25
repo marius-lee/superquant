@@ -21,6 +21,7 @@ from engine.strategy_core import (
 )
 from engine.bayesian_changepoint import bayesian_detect
 from engine.config import get_capital, init_capital, save_capital
+from engine.buy_rules import calculate_buys
 
 TRADE_DB = os.path.join(QUANT_ROOT, "data", "trades.db")
 ACTIVE_PARAMS = os.path.join(SUPERQUANT_ROOT, "config", "active_params.json")
