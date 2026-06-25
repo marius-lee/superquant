@@ -184,7 +184,7 @@ def run_scan(conn, capital, positions, tracked, history_cache, trade_log, disc_s
                      reason=f'变点+{phase}')
         trade_log.append({'date': today_str, 'symbol': sym, 'side': 'buy',
                           'price': price, 'shares': shares, 'pnl': 0})
-        print(f"  🟢 买 {sym} {s['type']} ¥{price:.2f} {shares}股 (信号{s['signal_score']}×因子{s['multiplier']:.2f})")
+        print(f"  🟢 买 {sym} ¥{price:.2f} {shares}股 ({phase})")
 
     # 3) 止盈止损 + 风控
     to_sell = []
