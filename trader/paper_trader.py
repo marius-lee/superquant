@@ -133,7 +133,7 @@ def build_memory_kdata(history, new_quote):
     return records
 
 
-def run_scan(conn, capital, positions, tracked, history_cache, trade_log):
+def run_scan(conn, capital, positions, tracked, history_cache, trade_log, disc_symbols=None):
     """单次扫描 — ML驱动。"""
     quotes = fetch_quotes(tracked)
     if not quotes:
@@ -303,11 +303,11 @@ def main():
             if now.hour < 9 or (now.hour == 9 and now.minute < 30):
                 time.sleep(30)
                 continue
-            capital, positions = run_scan(conn, capital, positions, tracked, history_cache, trade_log)
+            capital, positions = run_scan(conn, capital, positions, tracked, history_cache, trade_log, disc_symbols)
             print(f"  [{now.strftime('%H:%M:%S')}] 资金=¥{capital:.0f}, 持仓={len(positions)}")
             time.sleep(ARGS.interval)
     else:
-        capital, positions = run_scan(conn, capital, positions, tracked, history_cache, trade_log)
+        capital, positions = run_scan(conn, capital, positions, tracked, history_cache, trade_log, disc_symbols)
 
     # 持仓市值扣减卖出成本 (佣金0.03%+印花税0.1%+滑点0.87%≈1%)
     liquidation_discount = 1.0 - (COMMISSION + STAMP_TAX + 0.0087)
