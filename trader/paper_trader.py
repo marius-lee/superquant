@@ -17,7 +17,7 @@ sys.path.insert(0, SUPERQUANT_ROOT)
 sys.path.insert(0, QUANT_ROOT)
 
 from engine.strategy_core import (
-    calc_position_size, calc_adaptive_stop, calc_take_profit, generate_daily_returns,
+    calc_adaptive_stop, calc_take_profit,
 )
 from engine.bayesian_changepoint import bayesian_detect
 from engine.config import get_capital, init_capital, save_capital
@@ -30,11 +30,10 @@ COMMISSION = 0.0003     # 万三佣金 (来源: 行业标准)
 STAMP_TAX = 0.001       # 千一印花税 (来源: A股税法)
 ML_MIN_PROB = 0.95      # 来源: 模型验证 — Top20概率均>0.98, 取0.95保守
 MAX_HOLD_DAYS = 5       # 来源: 打板策略 — 封板失败5天内必出 (华安证券2025)
-DAILY_LOSS_LIMIT = 0.05 # 来源: A股涨跌停制度 — 单日最大亏损5%熔断
+DAILY_LOSS_LIMIT = 0.05 # 来源: config.yaml — 每日硬熔断5%
 T1_ENABLED = True       # 来源: A股交易规则 — T+1禁止当日卖出
 LIMIT_UP_BUY = 0.09     # 来源: daban源码 — 9%以上不买 (留1%缓冲)
 SINA_URL = "http://hq.sinajs.cn/list="
-ML_MIN_PROB = 0.95   # 来源: 模型验证 — Top20概率均>0.98, 取0.95保守
 
 
 def load_active_params():
@@ -122,27 +121,21 @@ def get_ml_candidates():
     return ['SH600000', 'SZ000001', 'SH600036'], 3
 
 
-def build_memory_kdata(history, new_quote):
-    """从历史缓存+最新报价构建伪K线用于 detect_signals。"""
-    # history = [(open, high, low, close, volume), ...]
-    op, hi, lo, cl, vol = new_quote['open'], new_quote['high'], new_quote['low'], new_quote['price'], new_quote['volume']
-    dt = datetime.now()  # 占位
-    records = []
-    for h in history:
-        records.append((dt, h[0], h[1], h[2], h[3], h[4]))
-    records.append((dt, op, hi, lo, cl, vol))
-    return records
-
-
 def run_scan(conn, capital, positions, tracked, history_cache, trade_log, disc_symbols=None):
-    """单次扫描 — ML驱动。"""
+    """单次扫描 — ML驱动。所有异常在内部处理, 保证不崩溃。"""
+    try:
+        return _run_scan_impl(conn, capital, positions, tracked, history_cache, trade_log, disc_symbols)
+    except Exception as e:
+        print(f"  ⚠️ run_scan 异常: {e}, 跳过本轮")
+        import traceback; traceback.print_exc()
+        return capital, positions
+
+
+def _run_scan_impl(conn, capital, positions, tracked, history_cache, trade_log, disc_symbols):
     quotes = fetch_quotes(tracked)
     if not quotes:
         return capital, positions
 
-    params = load_active_params()
-    kelly_params = params.get('kelly', {}) if params else {}
-    stop_params = params.get('stops', {}) if params else {}
     today_str = date.today().isoformat()
     today_positions = {p['symbol'] for p in positions}
     signals_triggered = []
@@ -208,8 +201,14 @@ def run_scan(conn, capital, positions, tracked, history_cache, trade_log, disc_s
         # 更新 peak
         pos['peak'] = max(pos.get('peak', pos['price']), q['high'])
 
-        # 止损: 自适应波动率
-        stop_px = calc_adaptive_stop(pos['price'], [], stop_params)
+        # 止损: 自适应波动率 (用历史缓存中的价格计算实际波动率)
+        hist_prices = [h[3] for h in history_cache.get(sym, [])[-20:]]
+        if len(hist_prices) >= 5:
+            from engine.strategy_core import generate_daily_returns
+            returns = generate_daily_returns(hist_prices)
+        else:
+            returns = []
+        stop_px = calc_adaptive_stop(pos['price'], returns)
         if q['price'] <= stop_px:
             to_sell.append((i, f'止损({pnl_pct:+.1f}%)', pnl_pct))
             continue
