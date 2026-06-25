@@ -167,29 +167,21 @@ def run_scan(conn, capital, positions, tracked, history_cache, trade_log, disc_s
                 'multiplier': 1.0, 'final_score': 1.0,
             })
 
-    # 2) 买入: 信号排序 → Kelly 仓位
+    # 2) 买入: 攻击期规则 (纯函数 calculate_buys)
     signals_triggered.sort(key=lambda s: s['final_score'], reverse=True)
-    for s in signals_triggered:
-        sym = s['symbol']
+    candidates = [(s['symbol'], s['price'], s['final_score']) for s in signals_triggered]
+    orders = calculate_buys(capital, candidates)
+    for sym, shares, price, phase in orders:
         if sym in today_positions: continue
-        price = s['price']
-        stop_price = calc_adaptive_stop(price, [], stop_params)
-        risk_per_share = max(price - stop_price, 0.01)
-        shares = calc_position_size(capital, price, risk_per_share, kelly_params)
-        # 探索通道: 仓位缩小到10%
-        if sym in disc_symbols:
-            shares = max(int(shares * 0.1 / 100) * 100, 100)
-        if shares < 100: continue
         cost = shares * price * (1 + COMMISSION)
-        if cost > capital: continue
         capital -= cost
         positions.append({
             'symbol': sym, 'price': price, 'shares': shares,
-            'buy_date': today_str, 'mode': s['type'],
-            'factor': s['factor_score'], 'peak': price,
+            'buy_date': today_str, 'mode': f'变点({phase})',
+            'factor': 0, 'peak': price,
         })
         record_trade(conn, sym, 'buy', price, shares, capital_after=capital,
-                     reason=s['type'])
+                     reason=f'变点+{phase}')
         trade_log.append({'date': today_str, 'symbol': sym, 'side': 'buy',
                           'price': price, 'shares': shares, 'pnl': 0})
         print(f"  🟢 买 {sym} {s['type']} ¥{price:.2f} {shares}股 (信号{s['signal_score']}×因子{s['multiplier']:.2f})")
