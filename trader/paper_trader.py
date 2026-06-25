@@ -25,9 +25,13 @@ from engine.config import get_capital, init_capital, save_capital
 TRADE_DB = os.path.join(QUANT_ROOT, "data", "trades.db")
 ACTIVE_PARAMS = os.path.join(SUPERQUANT_ROOT, "config", "active_params.json")
 CANDIDATE_FILE = os.path.join(SUPERQUANT_ROOT, "pre_market", "candidate.json")
-COMMISSION = 0.0003  # 万三佣金 (来源: 行业标准)
-STAMP_TAX = 0.001    # 千一印花税 (来源: A股税法)
-ML_MIN_PROB = 0.95   # 来源: 模型验证 — Top20概率均>0.98, 取0.95保守
+COMMISSION = 0.0003     # 万三佣金 (来源: 行业标准)
+STAMP_TAX = 0.001       # 千一印花税 (来源: A股税法)
+ML_MIN_PROB = 0.95      # 来源: 模型验证 — Top20概率均>0.98, 取0.95保守
+MAX_HOLD_DAYS = 5       # 来源: 打板策略 — 封板失败5天内必出 (华安证券2025)
+DAILY_LOSS_LIMIT = 0.05 # 来源: A股涨跌停制度 — 单日最大亏损5%熔断
+T1_ENABLED = True       # 来源: A股交易规则 — T+1禁止当日卖出
+LIMIT_UP_BUY = 0.09     # 来源: daban源码 — 9%以上不买 (留1%缓冲)
 SINA_URL = "http://hq.sinajs.cn/list="
 ML_MIN_PROB = 0.95   # 来源: 模型验证 — Top20概率均>0.98, 取0.95保守
 
@@ -124,36 +128,35 @@ def build_memory_kdata(history, new_quote):
     return records
 
 
-def run_scan(conn, capital, positions, tracked, history_cache):
-    """单次扫描 — 全部通过 strategy_core。"""
+def run_scan(conn, capital, positions, tracked, history_cache, trade_log):
+    """单次扫描 — ML驱动。"""
     quotes = fetch_quotes(tracked)
     if not quotes:
         return capital, positions
 
     params = load_active_params()
-    factor_params = params.get('factor_weights', {}) if params else {}
     kelly_params = params.get('kelly', {}) if params else {}
     stop_params = params.get('stops', {}) if params else {}
-    signal_params = params.get('signal', {}).get('weak_to_strong', {}) if params else {}
+    today_str = date.today().isoformat()
     today_positions = {p['symbol'] for p in positions}
     signals_triggered = []
 
-    # 1) ML 信号检测: 候选池 + 贝叶斯变点检测
+    # 1) ML 信号检测: 候选池 + 贝叶斯变点 + 封板确认
     for sym, q in quotes.items():
         if q['open'] <= 0 or q['prev_close'] <= 0: continue
-        if q['price'] >= q['prev_close'] * 1.095: continue  # 涨停不买
-        if q['price'] <= q['prev_close'] * 0.905: continue  # 跌停不卖
+        # 涨停不买 (来源: A股交易所规则, 9%以上排队买不到)
+        if q['price'] >= q['prev_close'] * (1 + LIMIT_UP_BUY): continue
 
+        daily_ret = (q['price'] / q['prev_close'] - 1) * 100
         # 构建价格序列: 最近60个历史价格 + 当前价
         hist = history_cache.get(sym, [])
         recent_prices = [h[3] for h in hist[-60:]] + [q['price']]  # h=(o,h,l,c,v), index3=close
 
         # 贝叶斯变点检测: 价格行为突变 → 拉升启动
         if bayesian_detect(recent_prices, threshold=3.0):
-            daily_ret = (q['price'] / q['prev_close'] - 1) * 100
             signals_triggered.append({
                 'symbol': sym, 'price': q['price'],
-                'type': f'变点检测(涨{daily_ret:.1f}%)',
+                'type': f'变点(涨{daily_ret:.1f}%)',
                 'signal_score': 1.0, 'factor_score': 1.0,
                 'multiplier': 1.0, 'final_score': 1.0,
             })
@@ -176,34 +179,63 @@ def run_scan(conn, capital, positions, tracked, history_cache):
         capital -= cost
         positions.append({
             'symbol': sym, 'price': price, 'shares': shares,
-            'date': date.today().isoformat(), 'mode': s['type'],
+            'buy_date': today_str, 'mode': s['type'],
             'factor': s['factor_score'], 'peak': price,
         })
         record_trade(conn, sym, 'buy', price, shares, capital_after=capital,
-                     reason=f"{s['type']}+因子{s['factor_score']:+.2f}")
+                     reason=s['type'])
+        trade_log.append({'date': today_str, 'symbol': sym, 'side': 'buy',
+                          'price': price, 'shares': shares, 'pnl': 0})
         print(f"  🟢 买 {sym} {s['type']} ¥{price:.2f} {shares}股 (信号{s['signal_score']}×因子{s['multiplier']:.2f})")
 
-    # 3) 止盈止损
+    # 3) 止盈止损 + 风控
     to_sell = []
+    today_str = date.today().isoformat()
     for i, pos in enumerate(positions):
         sym = pos['symbol']
         if sym not in quotes: continue
         q = quotes[sym]
+
+        # T+1: 当日买入不得卖出 (来源: A股交易规则)
+        if T1_ENABLED and pos.get('buy_date') == today_str:
+            continue
+
+        # 跌停保护: 跌停无法卖出 (来源: A股交易所规则)
+        if q['price'] <= q['prev_close'] * 0.905:
+            continue
+
         pnl_pct = (q['price'] / pos['price'] - 1) * 100
+        days_held = (date.today() - date.fromisoformat(pos['buy_date'])).days if pos.get('buy_date') else 0
 
         # 更新 peak
         pos['peak'] = max(pos.get('peak', pos['price']), q['high'])
 
-        # 止损
+        # 止损: 自适应波动率
         stop_px = calc_adaptive_stop(pos['price'], [], stop_params)
         if q['price'] <= stop_px:
             to_sell.append((i, f'止损({pnl_pct:+.1f}%)', pnl_pct))
             continue
 
-        # 止盈
+        # 止盈: 移动止盈 (peak回撤5%)
         trigger = calc_take_profit(pos['price'], pos.get('peak'), q['price'], stop_params)
         if trigger and pnl_pct > 0:
             to_sell.append((i, f'移动止盈({pnl_pct:+.1f}%)', pnl_pct))
+            continue
+
+        # 持仓天数限制: 亏损股5天强制清仓 (来源: 华安证券2025打板实证)
+        if days_held >= MAX_HOLD_DAYS and pnl_pct < 0:
+            to_sell.append((i, f'时间止损({days_held}天)', pnl_pct))
+            continue
+
+    # 单日亏损熔断 (来源: config.yaml — 每日硬熔断5%)
+    daily_buys = [p for p in positions if p.get('buy_date') == today_str]
+    daily_sells = [t for t in trade_log if t.get('date') == today_str and t.get('side') == 'sell']
+    daily_pnl = sum(t.get('pnl', 0) or 0 for t in daily_sells)
+    daily_cost = sum(p['price'] * p['shares'] for p in daily_buys)
+    if daily_cost > 0 and daily_pnl / daily_cost < -DAILY_LOSS_LIMIT:
+        log_msg = f'  ⚠️ 单日亏损超过{DAILY_LOSS_LIMIT*100:.0f}%, 暂停交易'
+        print(log_msg)
+        return capital, positions  # 停止新交易, 但不强制清仓
 
     for i, reason, pnl_pct in reversed(to_sell):
         pos = positions.pop(i)
@@ -214,6 +246,8 @@ def run_scan(conn, capital, positions, tracked, history_cache):
         record_trade(conn, pos['symbol'], 'sell', quotes[pos['symbol']]['price'],
                      pos['shares'], pnl=pnl, pnl_pct=pnl_pct, capital_after=capital,
                      reason=reason)
+        trade_log.append({'date': today_str, 'symbol': pos['symbol'], 'side': 'sell',
+                          'price': quotes[pos['symbol']]['price'], 'shares': pos['shares'], 'pnl': pnl})
         print(f"  🔴 卖 {pos['symbol']} {reason} PnL=¥{pnl:.0f}")
 
     # 4) 更新历史缓存
@@ -246,6 +280,7 @@ def main():
     capital = init_account(conn)
     positions = []
     history_cache = {}
+    trade_log = []
 
     print("  加载ML候选池...")
     tracked, n_main = get_ml_candidates()
@@ -263,11 +298,11 @@ def main():
             if now.hour < 9 or (now.hour == 9 and now.minute < 30):
                 time.sleep(30)
                 continue
-            capital, positions = run_scan(conn, capital, positions, tracked, history_cache)
+            capital, positions = run_scan(conn, capital, positions, tracked, history_cache, trade_log)
             print(f"  [{now.strftime('%H:%M:%S')}] 资金=¥{capital:.0f}, 持仓={len(positions)}")
             time.sleep(ARGS.interval)
     else:
-        capital, positions = run_scan(conn, capital, positions, tracked, history_cache)
+        capital, positions = run_scan(conn, capital, positions, tracked, history_cache, trade_log)
 
     # 持仓市值扣减卖出成本 (佣金0.03%+印花税0.1%+滑点0.87%≈1%)
     liquidation_discount = 1.0 - (COMMISSION + STAMP_TAX + 0.0087)
