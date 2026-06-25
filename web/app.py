@@ -96,12 +96,15 @@ def _get_candidates():
         try:
             with open(CANDIDATE_FILE) as f:
                 data = json.load(f)
-                cands = data.get('candidates', [])
+                main = data.get('main', [])
+                disc = data.get('discovery', [])
+                all_cands = main + disc
                 return {
                     'date': data.get('date', date.today().isoformat()),
-                    'count': len(cands),
-                    'model': 'XGBoost (AUC=0.96)',
-                    'candidates': [{'symbol': c['symbol'], 'prob': c['prob']} for c in cands[:10]],
+                    'count': len(all_cands),
+                    'model': 'XGBoost+IF (AUC=0.95)',
+                    'main': [{'symbol': c['symbol'], 'prob': c['prob']} for c in main[:10]],
+                    'discovery': [{'symbol': c['symbol'], 'prob': c['prob']} for c in disc[:5]],
                 }
         except Exception:
             pass

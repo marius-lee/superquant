@@ -135,5 +135,6 @@ candidates = {
     'discovery': [{'symbol': s, 'prob': round(float(c), 4)} for s, _, _, c in disc_results],
 }
 with open(CANDIDATE_FILE, 'w') as f:
-    json.dump({'date': today, 'candidates': candidates}, f, indent=2, ensure_ascii=False)
-print(f"\n✅ 候选保存: {CANDIDATE_FILE} ({len(candidates)}只)")
+    output = {'date': today, 'main': candidates['main'], 'discovery': candidates['discovery']}
+    json.dump(output, f, indent=2, ensure_ascii=False)
+print(f"\n✅ 候选保存: {CANDIDATE_FILE} (主力{len(candidates['main'])}只+探索{len(candidates['discovery'])}只)")
