@@ -49,7 +49,12 @@ def fetch_quotes(symbols):
     # 分批请求: Sina API实测800只/次0.3s, 每批800只
     BATCH = 800  # 来源: Sina实测 — 800只0.3s, 连发未限流
     results = {}
-    codes = [f"{'sh' if s.startswith('6') else 'sz'}{s}" for s in symbols]
+    # 市场前缀: SH(6/5/9), BJ(920), SZ(0/3)
+    codes = []
+    for s in symbols:
+        if s.startswith('920'): codes.append(f'bj{s}')
+        elif s.startswith(('6','5','9')): codes.append(f'sh{s}')
+        else: codes.append(f'sz{s}')
     for i in range(0, len(codes), BATCH):
         batch = codes[i:i+BATCH]
         url = SINA_URL + ",".join(batch)
