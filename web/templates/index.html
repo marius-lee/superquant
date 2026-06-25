@@ -119,14 +119,19 @@ async function refresh() {
       $('northstar-bar').style.width=Math.min(northstar.progress_pct,100)+'%';
       $('ns-remaining').textContent='¥'+Math.round(northstar.remaining||0).toLocaleString();
     }
-    // ML候选
-    if(candidates&&candidates.candidates&&candidates.candidates.length>0){
+    // ML候选 (双通道)
+    if(candidates&&candidates.main&&candidates.main.length>0){
       $('candidate-info').textContent=candidates.date+' | '+candidates.count+'只候选 | '+candidates.model;
       let html='';
-      candidates.candidates.forEach((c,i)=>{
-        let cls=c.prob>0.98?'up':c.prob>0.95?'badge-active':'';
+      candidates.main.forEach((c,i)=>{
+        let cls=c.prob>0.95?'up':c.prob>0.8?'badge-active':'';
         html+='<tr><td>'+(i+1)+'</td><td>'+c.symbol+'</td><td class="'+cls+'">'+(c.prob*100).toFixed(1)+'%</td></tr>';
       });
+      if(candidates.discovery&&candidates.discovery.length>0){
+        candidates.discovery.forEach((c,i)=>{
+          html+='<tr style="opacity:0.7"><td>🔍</td><td>'+c.symbol+'</td><td style="color:#ffd700">'+(c.prob*100).toFixed(1)+'%</td></tr>';
+        });
+      }
       $('candidate-table').querySelector('tbody').innerHTML=html;
     } else {
       $('candidate-info').textContent='待运行 ml/predict.py';
