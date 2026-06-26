@@ -274,3 +274,51 @@ if __name__ == '__main__':
     print("测试 L4 龙虎榜: 000001")
     f4 = get_l4_features('000001', '2026-06-23')
     print(f"  {f4}")
+
+
+# ══════════════════════════════════════════════════
+# 统一特征计算 (train/predict 共用 — item 4)
+# ══════════════════════════════════════════════════
+
+def compute_daily_features(r, closes, i, extra_cols=None, has_features=False):
+    """从单行日线数据计算特征向量。train.py 和 predict.py 共用。
+    
+    Args:
+        r: 当前行 (symbol, date, open, high, low, close, volume, amount, turnover, ...)
+        closes: 完整收盘价序列 (np.array)
+        i: 当前索引
+        extra_cols: 额外特征列 (L2-L5), None表示用0填充
+        has_features: daily_features表是否存在
+    
+    Returns:
+        list: 29维特征向量 + date_str
+    """
+    ret_1d = closes[i]/closes[i-1]-1 if closes[i-1]>0 else 0
+    ret_5d = closes[i]/closes[i-5]-1 if i>=5 and closes[i-5]>0 else 0
+    vols_5 = np.array([float(r[j][5]) for j in range(i-4,i+1)]) if i>=4 else np.array([float(r[5])])
+    vol_ratio = float(r[5])/max(np.mean(vols_5),1)
+    rets_5d = [(closes[j]/closes[j-1]-1) for j in range(i-4,i+1) if j>0 and closes[j-1]>0]
+    vol_5d = np.std(rets_5d) if len(rets_5d)>2 else 0
+    gap = float(r[2])/closes[i-1]-1 if closes[i-1]>0 else 0
+    turnover = float(r[8]) if r[8] else float(r[5])/10000.0
+    amt_log = np.log(max(float(r[6]),1))
+    hl_ratio = float(r[3])/max(float(r[4]),0.01)-1
+    close_pos = (float(r[4])-float(r[2]))/(max(float(r[3])-float(r[4]),0.01)+0.001)
+    ma20 = np.mean(closes[max(0,i-20):i+1])
+    ma_dev = closes[i]/ma20-1 if ma20>0 else 0
+    base = [ret_1d,ret_5d,vol_ratio,vol_5d,gap,turnover,amt_log,hl_ratio,close_pos,ma_dev]
+    
+    extra = []
+    if has_features and extra_cols is not None and len(r) > 9:
+        for v in r[9:]:
+            extra.append(float(v) if v is not None else 0.0)
+    else:
+        extra = [0.0] * 16
+    
+    feat = base + extra + [0.0, 0.0, 0.0]  # market features filled by caller
+    while len(feat) < 29:
+        feat.append(0.0)
+    feat = feat[:29]
+    feat = np.clip(feat, -10, 10).tolist()
+    
+    return feat, r[1]  # return (features, date_str)

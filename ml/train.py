@@ -114,7 +114,7 @@ for sym, rs in daily_data.items():
         turnover = float(r[8]) if r[8] else float(r[5])/10000.0
         amt_log = np.log(max(float(r[6]),1))
         hl_ratio = float(r[3])/max(float(r[4]),0.01)-1
-        close_pos = (float(r[4])-float(r[4]))/(max(float(r[3])-float(r[4]),0.01)+0.001)
+        close_pos = (float(r[4])-float(r[2]))/(max(float(r[3])-float(r[4]),0.01)+0.001)
         ma20 = np.mean(closes[max(0,i-20):i+1])
         ma_dev = closes[i]/ma20-1 if ma20>0 else 0
         base = [ret_1d,ret_5d,vol_ratio,vol_5d,gap,turnover,amt_log,hl_ratio,close_pos,ma_dev]

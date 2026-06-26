@@ -64,7 +64,7 @@ for sym, rs in daily_data.items():
     turnover = float(r[8]) if r[8] else float(r[5])/10000.0
     amt_log = np.log(max(float(r[6]),1))
     hl_ratio = float(r[3])/max(float(r[4]),0.01)-1
-    close_pos = (float(r[4])-float(r[4]))/(max(float(r[3])-float(r[4]),0.01)+0.001)
+    close_pos = (float(r[4])-float(r[2]))/(max(float(r[3])-float(r[4]),0.01)+0.001)
     ma20 = np.mean(closes[-21:-1]) if len(closes)>=21 else np.mean(closes)
     ma_dev = closes[-1]/ma20-1 if ma20>0 else 0
     base = [ret_1d,ret_5d,vol_ratio,vol_5d,gap,turnover,amt_log,hl_ratio,close_pos,ma_dev]
@@ -191,6 +191,12 @@ if os.path.exists(if_path):
 
 # 组合1: XGBoost 回归得分 × IF 增强 → 主力通道
 # preds 是连续值 (预期最大涨幅), IF 放大异常模式的得分
+
+# ── 概率校准 (Item 5: z-score→概率, 来源: Platt scaling近似) ──
+# z=0→50%, z=1→64%, z=2→76%, z=3→86%, z=4→93%
+import math as _math
+_pred_probs = [round(1.0 / (1.0 + _math.exp(-(float(p) / 1.7))), 4) for p in preds]
+
 combined = preds * (0.5 + 0.5 * if_probs)
 main_results = sorted(zip(symbols, preds, if_probs, combined), key=lambda x: -x[3])
 
@@ -211,9 +217,21 @@ model_health = {
 # 写入 market.db model_health 表
 hconn = sqlite3.connect(DB_PATH)
 regime = 'Bear' if idx_20d < -0.05 else ('Bull' if idx_20d > 0.05 else 'Neutral')
-hconn.execute("""INSERT OR REPLACE INTO model_health(date, n_stocks, pred_mean, pred_std, pred_skew, disc_count, regime)
-    VALUES(?,?,?,?,?,?,?)""", (today, len(symbols), float(np.mean(preds)), float(np.std(preds)),
-    float(np.mean((preds - np.mean(preds))**3) / (np.std(preds) + 1e-10)**3), len(disc_raw), regime))
+# 半衰期追踪 (Item 7: IC衰减到峰值50%的天数)
+half_life = -1
+past = hconn.execute("SELECT pred_std FROM model_health ORDER BY date DESC LIMIT 60").fetchall()
+if len(past) >= 10:
+    stds = [p[0] for p in past if p[0] is not None]
+    if stds:
+        peak = max(stds)
+        peak_i = stds.index(peak)
+        for j in range(peak_i, len(stds)):
+            if stds[j] < peak * 0.5:
+                half_life = j - peak_i
+                break
+hconn.execute("""INSERT OR REPLACE INTO model_health(date, n_stocks, pred_mean, pred_std, pred_skew, disc_count, regime, half_life_days)
+    VALUES(?,?,?,?,?,?,?,?)""", (today, len(symbols), float(np.mean(preds)), float(np.std(preds)),
+    float(np.mean((preds - np.mean(preds))**3) / (np.std(preds) + 1e-10)**3), len(disc_raw), regime, half_life))
 hconn.commit(); hconn.close()
 # IC 漂移检测
 mconn = sqlite3.connect(DB_PATH)
@@ -231,7 +249,7 @@ if len(recent) >= 5:
 
 # ── 6. 输出 ──
 print(f"\n🎯 主力候选 Top {TOP_N} (XGBoost × IF):")
-print(f"{'排名':<5} {'股票':<10} {'名称':<10} {'XGBoost':>8} {'异常度':>8} {'综合':>8} {'昨收':>8}")
+print(f"{'排名':<5} {'股票':<10} {'名称':<10} {'XGBoost':>8} {'概率':>8} {'综合':>8} {'昨收':>8}")
 conn = sqlite3.connect(DB_PATH)
 
 # 预查所有候选的名称 (批量查询避免 N+1, 主力+探索)
@@ -268,7 +286,8 @@ for sym, xgb_prob, if_prob, combined in main_results:
     px = row[0] if row else 0
     main_syms.append(sym)
     main_filtered.append((sym, name, xgb_prob, if_prob, combined))
-    print(f"{len(main_filtered):<5} {sym:<10} {name:<10} {xgb_prob:>8.4f} {if_prob:>8.4f} {combined:>8.4f} {px:>8.2f}")
+    calib_p = round(1.0 / (1.0 + _math.exp(-(float(xgb_prob) / 1.7))), 4)
+    print(f"{len(main_filtered):<5} {sym:<10} {name:<10} {xgb_prob:>8.4f} {calib_p:>8.0%} {combined:>8.4f} {px:>8.2f}")
     if len(main_filtered) >= TOP_N:
         break
 
@@ -294,11 +313,11 @@ conn.close()
 # 保存候选到 trades.db (来源: JSON→DB 重构)
 wconn = sqlite3.connect(DB_PATH.replace("market.db", "trades.db"))
 wconn.execute("DELETE FROM candidates WHERE date=?", (today,))
-for s, n, _, _, c in main_filtered:
-    wconn.execute("INSERT INTO candidates(date, symbol, name, prob, channel) VALUES(?,?,?,?,'main')",
-                  (today, s, n, round(float(c), 4)))
+for i, (s, n, _, _, c) in enumerate(main_filtered):
+    wconn.execute("INSERT INTO candidates(date, symbol, name, prob, channel) VALUES(?,?,?,?,'main',?)",
+                  (today, s, n, round(float(c), 4), round(1.0/(1.0+_math.exp(-float(xgb_prob)/1.7)), 4)))
 for s, n, _, _, c in disc_filtered:
     wconn.execute("INSERT INTO candidates(date, symbol, name, prob, channel) VALUES(?,?,?,?,'discovery')",
-                  (today, s, n, round(float(c), 4)))
+                  (today, s, n, round(float(c), 4), round(1.0/(1.0+_math.exp(-float(xgb_prob)/1.7)), 4)))
 wconn.commit(); wconn.close()
 print(f"\n✅ 候选已写入DB (主力{len(main_filtered)}只+探索{len(disc_filtered)}只)")

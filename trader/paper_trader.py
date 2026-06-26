@@ -39,15 +39,66 @@ SINA_URL = "http://hq.sinajs.cn/list="
 # JSON→DB 重构: signal_events, signal_stats, rejected_signals 全迁入 trades.db
 # 以下常量仅保留文件路径引用 (用于兼容), 实际读写走 DB
 
-# 信号权重 — 等权 (来源: Narang方法一, Grinold "无信息时等权最优")
-# A=趋势(BOCPD), B=量价背离, E=均值回复
-# C/D 已砍 — 买盘堆积(0%触发)+VWAP(无独立贡献), 无实证支撑
-SIGNAL_PRIORS = {
-    'A': {'alpha': 5.0, 'beta': 5.0},
-    'B': {'alpha': 5.0, 'beta': 5.0},
-    'E': {'alpha': 5.0, 'beta': 5.0},
-}
+# 信号权重 — 等权, 启动时从DB加载可覆盖
 DEFAULT_SIGNAL_WEIGHTS = {'A': 0.33, 'B': 0.33, 'E': 0.33}
+
+def load_params_from_db(mode):
+    """从 strategy_params 表加载参数 (Item 3: 参数入DB)。
+    优先级: data_driven > hand (默认值)
+    """
+    try:
+        conn = sqlite3.connect(TRADE_DB)
+        rows = conn.execute(
+            "SELECT param_name, param_value, source FROM strategy_params WHERE mode=? ORDER BY source DESC",
+            (mode,)
+        ).fetchall()
+        conn.close()
+        params = {}
+        for name, val, src in rows:
+            if name not in params:  # 第一个=最高优先级source
+                params[name] = val
+        return params
+    except Exception:
+        return {}
+
+def check_signal_circuit_breaker():
+    """信号熔断: 连续亏损3次降权50%, 5次暂停。
+
+    来源: 幻方量化 — "单策略连续亏损超阈值自动熔断"。
+    Returns: {signal_code: multiplier} 1.0=正常, 0.5=降权, 0=暂停
+    """
+    try:
+        conn = sqlite3.connect(TRADE_DB)
+        breakers = {}
+        for code in ['A', 'B', 'E']:
+            # 查最近5笔该信号的交易
+            rows = conn.execute("""
+                SELECT s.pnl_pct FROM sim_trades s
+                JOIN signal_events e ON s.symbol = e.symbol AND s.date = e.date
+                WHERE s.side = 'sell' AND e.signal LIKE ? AND s.pnl_pct IS NOT NULL
+                ORDER BY s.id DESC LIMIT 5
+            """, (f'%{code}%',)).fetchall()
+            if not rows:
+                breakers[code] = 1.0
+                continue
+            # 统计连续亏损次数
+            consecutive_losses = 0
+            for r in rows:
+                if r[0] < 0:
+                    consecutive_losses += 1
+                else:
+                    break  # 遇到盈利就停
+            if consecutive_losses >= 5:
+                breakers[code] = 0.0   # 暂停
+            elif consecutive_losses >= 3:
+                breakers[code] = 0.5   # 降权
+            else:
+                breakers[code] = 1.0
+        conn.close()
+        return breakers
+    except Exception:
+        return {'A': 1.0, 'B': 1.0, 'E': 1.0}
+
 
 def load_signal_weights():
     """从 signal_stats 表加载实证权重 (JSON->DB 重构)。"""
@@ -288,6 +339,8 @@ def _run_scan_impl(conn, capital, positions, tracked, history_cache, trade_log, 
     # 1) 多信号实时检测 (三级漏斗 第二级)
     #   四个并行信号, 任何一个触发→进入第三级盘口确认
     # ═════════════════════════════════════════════════════════
+    sw = load_signal_weights()  # 一次扫描内权重不变, 提到循环外
+    cb = check_signal_circuit_breaker()  # 信号熔断: 连续亏损→降权/暂停
     for sym, q in quotes.items():
         if q['open'] <= 0 or q['prev_close'] <= 0: continue
 
@@ -296,8 +349,7 @@ def _run_scan_impl(conn, capital, positions, tracked, history_cache, trade_log, 
         prices = [h[3] for h in hist[-60:]] + [q['price']]
         volumes = [h[4] for h in hist[-60:]] if hist else []
 
-        sw = load_signal_weights()
-        signals_fired = []  # 本轮所有触发的信号 (贝叶斯联动: 联合确认)
+        signals_fired = []
 
         # 信号 A: BOCPD 趋势变点 (Adams & MacKay 2007)
         if bayesian_detect(prices):
@@ -336,6 +388,9 @@ def _run_scan_impl(conn, capital, positions, tracked, history_cache, trade_log, 
                 signal_score = (has_A + has_B + has_E) / n_effective
             else:  # Neutral — 等权
                 signal_score = len(signals_fired) / 3.0
+            # 信号熔断乘数 (来源: 幻方 — 连续亏损→降权/暂停)
+            cb_mult = min(cb.get(code, 1.0) for code in signal_codes)
+            signal_score *= cb_mult
             signal_type = '+'.join(signal_codes)
             # ── 第三级: 盘口确认 ──
             buyable, reason = check_buyable(sym, q)
@@ -364,6 +419,7 @@ def _run_scan_impl(conn, capital, positions, tracked, history_cache, trade_log, 
             signals_triggered.append({
                 'symbol': sym, 'price': q['price'],
                 'type': f'{signal_type}×{multiplier:.1f}·{regime_label}',
+                'signal_codes': signal_type,  # 干净码 "A+B+E" 供 update_signal_stats 用
                 'signal_score': signal_score,
                 'factor_score': multiplier,
                 'multiplier': multiplier,
@@ -373,7 +429,7 @@ def _run_scan_impl(conn, capital, positions, tracked, history_cache, trade_log, 
     # 2) 买入: 攻击期规则 (纯函数 calculate_buys)
     signals_triggered.sort(key=lambda s: s['final_score'], reverse=True)
     # 构建 symbol→信号类型 映射 (来源: P2-11 在线学习 — 记录每笔交易由哪个信号触发)
-    signal_type_map = {s['symbol']: s.get('type', '?') for s in signals_triggered}
+    signal_type_map = {s['symbol']: s.get('signal_codes', '') for s in signals_triggered}
     candidates = [(s['symbol'], s['price'], s['final_score']) for s in signals_triggered]
     orders = calculate_buys(capital, candidates)
     for sym, shares, price, phase in orders:

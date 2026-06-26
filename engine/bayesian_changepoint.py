@@ -12,7 +12,7 @@
       if prob > 0.30 and age < 10:  # 刚变→交易信号
 
 关键参数 (来源: AetherEdge + Kass & Raftery 1995):
-  hazard = 1/平均状态长度 (默认1/50=0.02, 保守)
+  hazard = 1/平均状态长度 (默认1/20=0.05, 适合日内交易~100min/状态)
   threshold = 0.30 (变点概率阈值, 业界推荐 0.25-0.40)
 """
 
@@ -78,11 +78,8 @@ class BOCPD:
         后验预测为 Student-t(2α_n, μ_n, β_n(κ_n+1)/(α_n κ_n))
         """
         n = self.run_n[run_len_idx]
-        if n == 0:
-            # 无数据 → 使用先验预测
-            return 0.0 if abs(x) > 0.2 else 1.0  # 宽先验
-
-        # 先验参数
+        # n=0 是自然情况: 后验=先验 → t₂(0,2), 宽弱信息分布
+        # 不需要特殊分支, 以下公式对 n=0 自动给出正确结果
         alpha0, beta0, mu0, kappa0 = 1.0, 1.0, 0.0, 1.0
         # 后验参数
         kappa_n = kappa0 + n

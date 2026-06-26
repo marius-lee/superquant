@@ -23,6 +23,16 @@ def calc_adaptive_stop(entry_price, daily_returns, params=None):
     base = params.get('adaptive_stop_base', 0.05)
     floor = params.get('adaptive_stop_floor', 0.02)
     ceiling = params.get('adaptive_stop_ceiling', 0.08)
+    # 优先从 DB 读取优化值
+    try:
+        from engine.db_schema import load_params
+        opt = load_params('stop_params', 'data_driven')
+        if opt:
+            base = opt.get('base', base)
+            floor = opt.get('floor', floor)
+            ceiling = opt.get('ceiling', ceiling)
+    except Exception:
+        pass
 
     down_rets = [r for r in daily_returns if r < 0]
     if len(down_rets) < 5:
@@ -44,6 +54,26 @@ def calc_take_profit(entry_price, peak_price, current_price, params=None):
     peak = max(entry_price, peak_price or entry_price)
     trigger = peak * (1 - trail_pct)
     return trigger if current_price <= trigger else None
+
+
+def calc_position_size(capital, price, risk_per_share, params=None):
+    """半Kelly 仓位计算。来源: Kelly 1956, Thorp 2006, Chan 量化交易 §3。"""
+    if params is None:
+        params = {}
+    win_rate = params.get('win_rate', 0.55)
+    avg_win_loss = params.get('avg_win_loss', 2.0)
+    rho = params.get('rho', 0.3)
+    n_positions = params.get('n_positions', 3)
+    max_position_pct = params.get('max_position_pct', 0.33)
+    if risk_per_share <= 0:
+        risk_per_share = 0.01
+    kelly_f = (avg_win_loss * win_rate - (1 - win_rate)) / max(avg_win_loss, 1.0)
+    half_kelly = kelly_f * 0.5
+    kelly_adj = half_kelly / (1 + rho * max(n_positions - 1, 0))
+    max_bet = capital * max_position_pct
+    risk_amount = min(capital * kelly_adj, max_bet)
+    shares = int(risk_amount / price / 100) * 100
+    return max(shares, 0)
 
 
 def _std(values):
