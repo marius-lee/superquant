@@ -56,8 +56,8 @@ for sym, rs in daily_data.items():
     if closes[-2] <= 0: continue
     ret_1d = closes[-1]/closes[-2]-1
     ret_5d = closes[-1]/closes[-6]-1 if len(closes)>=2 and closes[-6]>0 else 0
-    vols_5 = np.array([float(rs_10[j][5]) for j in range(-5,0)])
-    vol_ratio = float(r[5])/max(np.mean(vols_5),1)
+    vols_5 = np.array([float(rs_10[j][6]) for j in range(-5,0)])  # 索引6=成交量
+    vol_ratio = float(r[6])/max(np.mean(vols_5),1)
     rets_5d = [(closes[j]/closes[j-1]-1) for j in range(-4,0) if closes[j-1]>0]
     vol_5d = np.std(rets_5d) if len(rets_5d)>2 else 0
     gap = float(r[2])/closes[-2]-1

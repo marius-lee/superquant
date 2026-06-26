@@ -106,8 +106,8 @@ for sym, rs in daily_data.items():
         # ── 日线特征 (10个) ──
         ret_1d = closes[i]/closes[i-1]-1
         ret_5d = closes[i]/closes[i-5]-1 if i>=5 and closes[i-5]>0 else 0
-        vols_5 = np.array([float(rs[j][5]) for j in range(i-4,i+1)])
-        vol_ratio = float(r[5])/max(np.mean(vols_5),1)
+        vols_5 = np.array([float(rs[j][6]) for j in range(i-4,i+1)])  # 索引6=成交量
+        vol_ratio = float(r[6])/max(np.mean(vols_5),1)
         rets_5d = [(closes[j]/closes[j-1]-1) for j in range(i-4,i+1) if closes[j-1]>0]
         vol_5d = np.std(rets_5d) if len(rets_5d)>2 else 0
         gap = float(r[2])/closes[i-1]-1
