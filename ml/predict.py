@@ -62,7 +62,7 @@ for sym, rs in daily_data.items():
     vol_5d = np.std(rets_5d) if len(rets_5d)>2 else 0
     gap = float(r[2])/closes[-2]-1
     turnover = float(r[8]) if r[8] else float(r[5])/10000.0
-    amt_log = np.log(max(float(r[6]),1))
+    amt_log = np.log(max(float(r[7]),1))  # r[7]=成交额, r[6]=成交量
     hl_ratio = float(r[3])/max(float(r[4]),0.01)-1
     close_pos = (float(r[5])-float(r[2]))/(max(float(r[3])-float(r[4]),0.01)+0.001)  # (CLOSE-OPEN)/range
     ma20 = np.mean(closes[-21:-1]) if len(closes)>=21 else np.mean(closes)

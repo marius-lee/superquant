@@ -10556,3 +10556,101 @@ superquant Web — 攻击性涨停捕捉
 127.0.0.1 - - [27/Jun/2026 00:59:59] "GET /api/trades HTTP/1.1" 200 -
 127.0.0.1 - - [27/Jun/2026 00:59:59] "GET /api/signal-stats HTTP/1.1" 200 -
 127.0.0.1 - - [27/Jun/2026 01:00:00] "GET /api/l3-progress HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:00:59] "GET /api/signals HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:00:59] "GET /api/positions HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:00:59] "GET /api/rejected HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:00:59] "GET /api/northstar HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:00:59] "GET /api/signal-stats HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:00:59] "GET /api/metrics HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:00:59] "GET /api/trades HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:00:59] "GET /api/candidates HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:00:59] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:00:59] "GET /api/l3-progress HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:01:59] "GET /api/signals HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:01:59] "GET /api/rejected HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:01:59] "GET /api/positions HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:01:59] "GET /api/northstar HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:01:59] "GET /api/candidates HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:01:59] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:01:59] "GET /api/metrics HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:01:59] "GET /api/signal-stats HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:01:59] "GET /api/trades HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:01:59] "GET /api/l3-progress HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:02:59] "GET /api/rejected HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:02:59] "GET /api/positions HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:02:59] "GET /api/signals HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:02:59] "GET /api/northstar HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:02:59] "GET /api/trades HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:02:59] "GET /api/signal-stats HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:02:59] "GET /api/candidates HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:02:59] "GET /api/metrics HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:02:59] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:02:59] "GET /api/l3-progress HTTP/1.1" 200 -
+ * Detected change in '/Users/mariusto/project/superquant/ml/train.py', reloading
+ * Restarting with stat
+==================================================
+superquant Web — 攻击性涨停捕捉
+  地址: http://localhost:8522
+  初始资金: 2
+==================================================
+ * Debugger is active!
+ * Debugger PIN: 610-832-373
+127.0.0.1 - - [27/Jun/2026 01:03:59] "GET /api/positions HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:03:59] "GET /api/rejected HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:03:59] "GET /api/signals HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:03:59] "GET /api/northstar HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:03:59] "GET /api/trades HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:03:59] "GET /api/signal-stats HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:03:59] "GET /api/candidates HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:03:59] "GET /api/metrics HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:03:59] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:03:59] "GET /api/l3-progress HTTP/1.1" 200 -
+ * Detected change in '/Users/mariusto/project/superquant/ml/predict.py', reloading
+ * Restarting with stat
+==================================================
+superquant Web — 攻击性涨停捕捉
+  地址: http://localhost:8522
+  初始资金: 2
+==================================================
+ * Debugger is active!
+ * Debugger PIN: 610-832-373
+127.0.0.1 - - [27/Jun/2026 01:04:59] "GET /api/positions HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:04:59] "GET /api/rejected HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:04:59] "GET /api/signals HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:04:59] "GET /api/signal-stats HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:04:59] "GET /api/northstar HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:04:59] "GET /api/trades HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:04:59] "GET /api/metrics HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:04:59] "GET /api/candidates HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:04:59] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:04:59] "GET /api/l3-progress HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:05:59] "GET /api/rejected HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:05:59] "GET /api/positions HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:05:59] "GET /api/signals HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:05:59] "GET /api/northstar HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:05:59] "GET /api/signal-stats HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:05:59] "GET /api/trades HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:05:59] "GET /api/metrics HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:05:59] "GET /api/candidates HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:05:59] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:06:00] "GET /api/l3-progress HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:06:59] "GET /api/positions HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:06:59] "GET /api/rejected HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:06:59] "GET /api/signals HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:06:59] "GET /api/northstar HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:06:59] "GET /api/candidates HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:06:59] "GET /api/signal-stats HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:06:59] "GET /api/metrics HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:06:59] "GET /api/trades HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:06:59] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:07:00] "GET /api/l3-progress HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:08:01] "GET /api/positions HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:08:02] "GET /api/northstar HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:08:02] "GET /api/candidates HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:08:02] "GET /api/signals HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:08:02] "GET /api/signal-stats HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:08:02] "GET /api/rejected HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:08:02] "GET /api/trades HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:08:02] "GET /api/metrics HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:08:02] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [27/Jun/2026 01:08:03] "GET /api/l3-progress HTTP/1.1" 200 -
