@@ -157,7 +157,7 @@ def _post_review():
         try:
             from ops.monte_carlo import test_signal, test_strategy
             for code in ['A', 'B', 'E']:
-                r = test_signal(code, n_permutations=500)  # 每日500次, 每周3000+次够用
+                r = test_signal(code, n_permutations=1000)  # 来源: Masters标准, 最少1000次
                 if r['n_trades'] >= 5:
                     print(f"    {code}: p={r['p_value']:.3f} {r['verdict']}")
                     if not r['is_significant'] and r['percentile'] < 50:
@@ -170,7 +170,7 @@ def _post_review():
                 else:
                     print(f"    {code}: 数据不足 (n={r['n_trades']})")
             # 策略整体检验
-            s = test_strategy(n_permutations=500)
+            s = test_strategy(n_permutations=1000)
             if s.get('n_trades', 0) >= 10:
                 print(f"  策略整体: p={s.get('p_total',1):.3f} {s.get('verdict','')}")
         except Exception as e:
