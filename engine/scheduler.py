@@ -56,9 +56,58 @@ def pre_market():
     errors = 0
     errors += run_step("日线同步", "data.daily_sync")
     errors += run_step("ML 预测", "ml.predict")
-    if errors > 0:
+    # 08:46 预检: candidates非空 + model_health写入
+    if errors == 0:
+        errors += _pre_check()
+    else:
         print(f"⚠️ 盘前流程 {errors} 步失败")
     return errors
+
+
+def _pre_check():
+    """预检: 确认 candidates 和 model_health 已生成。"""
+    import sqlite3
+    today = date.today().isoformat()
+    try:
+        conn = sqlite3.connect(os.path.join(os.path.expanduser("~/project/quant"), "data", "trades.db"))
+        n_cand = conn.execute("SELECT COUNT(*) FROM candidates WHERE date=?", (today,)).fetchone()[0]
+        conn.close()
+        mkt = sqlite3.connect(os.path.join(os.path.expanduser("~/project/quant"), "data", "market.db"))
+        n_health = mkt.execute("SELECT COUNT(*) FROM model_health WHERE date=?", (today,)).fetchone()[0]
+        mkt.close()
+        if n_cand == 0:
+            print(f"  ❌ 预检失败: candidates={n_cand}只, model_health={n_health}条")
+            return 1
+        print(f"  ✅ 预检通过: candidates={n_cand}只, model_health={n_health}条")
+        # 连续无交易告警
+        return _alert_check()
+    except Exception as e:
+        print(f"  ❌ 预检异常: {e}")
+        return 1
+
+
+def _alert_check():
+    """告警: 连续2天无交易则打印警告。"""
+    import sqlite3
+    today = date.today().isoformat()
+    try:
+        conn = sqlite3.connect(os.path.join(os.path.expanduser("~/project/quant"), "data", "trades.db"))
+        days_with_trades = conn.execute("""
+            SELECT DISTINCT date FROM sim_trades WHERE side='buy'
+            ORDER BY date DESC LIMIT 2
+        """).fetchall()
+        conn.close()
+        if len(days_with_trades) == 0 or days_with_trades[0][0] < today:
+            # 检查最近是否有交易
+            last_trade = days_with_trades[0][0] if days_with_trades else '无'
+            if last_trade != today and last_trade != '无':
+                # 一天无交易正常, 连续两天告警
+                prev_days = [d[0] for d in days_with_trades]
+                if len(prev_days) >= 2:
+                    print(f"  ⚠️ 连续两天无交易 (最后交易: {prev_days[0]})")
+    except Exception:
+        pass
+    return 0
 
 
 def live_trading():
@@ -75,9 +124,37 @@ def post_market():
     errors = 0
     errors += run_step("分钟存储", "data.minute_store", ["--market", "all", "--today"])
     errors += run_step("ML 训练", "ml.train")
+    # 15:06 复盘
+    _post_review()
     if errors > 0:
         print(f"⚠️ 盘后流程 {errors} 步失败")
     return errors
+
+
+def _post_review():
+    """复盘: 今日收益/信号/异常总结。"""
+    import sqlite3
+    today = date.today().isoformat()
+    print(f"\n{'='*40}")
+    print(f"📊 今日复盘 — {today}")
+    print(f"{'='*40}")
+    try:
+        conn = sqlite3.connect(os.path.join(os.path.expanduser("~/project/quant"), "data", "trades.db"))
+        # 交易统计
+        buys = conn.execute("SELECT COUNT(*), COALESCE(SUM(price*shares),0) FROM sim_trades WHERE side='buy' AND date=?", (today,)).fetchone()
+        sells = conn.execute("SELECT COUNT(*), COALESCE(SUM(pnl),0) FROM sim_trades WHERE side='sell' AND date=?", (today,)).fetchone()
+        # 信号统计
+        sigs = conn.execute("SELECT signal, COUNT(*) FROM signal_events WHERE date=? GROUP BY signal", (today,)).fetchall()
+        conn.close()
+        print(f"  买入: {buys[0]}笔, ¥{buys[1]:,.0f}")
+        print(f"  卖出: {sells[0]}笔, 盈亏¥{sells[1]:+,.0f}")
+        print(f"  信号触发: {sum(s[1] for s in sigs)}次")
+        for s in sigs:
+            print(f"    {s[0]}: {s[1]}次")
+        if buys[0] == 0:
+            print(f"  ⚠️ 今日无交易 — 检查候选质量或市场状态")
+    except Exception as e:
+        print(f"  ❌ 复盘异常: {e}")
 
 
 def full_cycle():
