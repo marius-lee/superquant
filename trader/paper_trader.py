@@ -39,19 +39,15 @@ SINA_URL = "http://hq.sinajs.cn/list="
 # JSON→DB 重构: signal_events, signal_stats, rejected_signals 全迁入 trades.db
 # 以下常量仅保留文件路径引用 (用于兼容), 实际读写走 DB
 
-# 信号权重 — Dirichlet 先验 (来源: 文献实证效果, 先验权重10%)
-# A: Barry & Hartigan 1993 — 变点后55%方向正确 → 先验胜率 0.55
-# B: Blume, Easley & O'Hara 1994 — 量在价先但噪声大 → 先验胜率 0.45
-# C: Cont, Kukanov & Stoikov 2014 — 订单流最强短期信号 → 先验胜率 0.55
-# D: Berkowitz, Logue & Noser 1988 — VWAP 主过滤非独立Alpha → 先验胜率 0.40
-# 先验权重 = total_count 的 10% (Dirichlet 集中参数)
+# 信号权重 — 等权 (来源: Narang方法一, Grinold "无信息时等权最优")
+# A=趋势(BOCPD), B=量价背离, E=均值回复
+# C/D 已砍 — 买盘堆积(0%触发)+VWAP(无独立贡献), 无实证支撑
 SIGNAL_PRIORS = {
-    'A': {'alpha': 5.5, 'beta': 4.5},   # 55% × 10 (伪样本)
-    'B': {'alpha': 4.5, 'beta': 5.5},   # 45% × 10
-    'C': {'alpha': 5.5, 'beta': 4.5},   # 55% × 10
-    'D': {'alpha': 4.0, 'beta': 6.0},   # 40% × 10
+    'A': {'alpha': 5.0, 'beta': 5.0},
+    'B': {'alpha': 5.0, 'beta': 5.0},
+    'E': {'alpha': 5.0, 'beta': 5.0},
 }
-DEFAULT_SIGNAL_WEIGHTS = {'A': 0.55, 'B': 0.45, 'C': 0.55, 'D': 0.40}
+DEFAULT_SIGNAL_WEIGHTS = {'A': 0.33, 'B': 0.33, 'E': 0.33}
 
 def load_signal_weights():
     """从 signal_stats 表加载实证权重 (JSON->DB 重构)。"""
@@ -303,9 +299,9 @@ def _run_scan_impl(conn, capital, positions, tracked, history_cache, trade_log, 
         sw = load_signal_weights()
         signals_fired = []  # 本轮所有触发的信号 (贝叶斯联动: 联合确认)
 
-        # 信号 A: 贝叶斯变点
-        if bayesian_detect(prices, threshold=3.0):
-            signals_fired.append(('A', sw.get('A', 1.0)))
+        # 信号 A: BOCPD 趋势变点 (Adams & MacKay 2007)
+        if bayesian_detect(prices):
+            signals_fired.append(('A', sw.get('A', 0.33)))
 
         # 信号 B: 量价背离
         if len(hist) >= 10:
@@ -313,35 +309,34 @@ def _run_scan_impl(conn, capital, positions, tracked, history_cache, trade_log, 
             avg_vol = sum(recent_vols[:-1]) / max(len(recent_vols)-1, 1)
             cur_vol = q.get('volume', 0)
             if cur_vol > avg_vol * 3 and abs(daily_ret) < 2.0:
-                signals_fired.append(('B', sw.get('B', 0.8)))
+                signals_fired.append(('B', sw.get('B', 0.33)))
 
-        # 信号 C: 买盘堆积
-        cur_buy = q.get('buy_vol_1', 0)
-        cur_sell = q.get('sell_vol_1', 0)
-        if cur_buy > 0 and cur_sell > 0 and cur_buy > cur_sell * 3 and daily_ret > 0:
-            signals_fired.append(('C', sw.get('C', 0.9)))
-
-        # 信号 D: 竞价异常 (来源: P2-13 VWAP替代 — VWAP=机构公平价格基准)
-        # VWAP = 累计成交额/累计成交量 (日内实时), 替代原20周期均线
-        # 价格突破VWAP 2% → 主力资金正在推高, 存在竞价异常
-        amount = q.get('amount', 0)
-        volume = q.get('volume', 0)
-        if amount > 0 and volume > 0:
-            vwap = amount / volume  # 来源: Sina API — volume=股, amount=元, VWAP=元/股
-            if q['price'] > vwap * 1.02 and daily_ret > 1.0:
-                signals_fired.append(('D', sw.get('D', 0.7)))
+        # 信号 E: 均值回复 (来源: Narang 趋势+均值回复互补)
+        # 近5日累计跌幅>8% + 今日放量 → 超跌反弹
+        if len(prices) >= 6:
+            ret_5d = (prices[-1] / prices[-6] - 1) if prices[-6] > 0 else 0
+            if ret_5d < -0.08 and q.get('volume', 0) > 0:
+                signals_fired.append(('E', sw.get('E', 0.33)))
 
         if signals_fired:
-            # ── 贝叶斯联动: 多信号联合确认 (来源: 条件概率乘法规则) ──
-            # 每个独立信号更新后验概率: P' = P×w / (P×w + (1-P)×(1-w))
-            evidence = 0.5  # 先验 50%
-            signal_codes = []
-            for code, weight in signals_fired:
-                evidence = evidence * weight / (evidence * weight + (1-evidence) * (1-weight) + 1e-10)
-                signal_codes.append(code)
-            # 2信号→evidence≈0.73, 3信号→≈0.88, 4信号→≈0.98
-            signal_score = evidence
-            signal_type = '+'.join(signal_codes)  # 如 "A+B+C"
+            # ── 等权线性组合 (来源: Narang方法一, Grinold "无信息时等权最优") ──
+            signal_codes = [code for code, _ in signals_fired]
+            # 条件模型 (来源: Narang方法三 — 熊市倾向均值回复, 牛市倾向趋势)
+            if regime_mult <= 0.5:  # Bear
+                n_effective = 3.0
+                has_E = 1.5 if 'E' in signal_codes else 0  # E 1.5x
+                has_A = 0.5 if 'A' in signal_codes else 0  # A 0.5x
+                has_B = 1.0 if 'B' in signal_codes else 0
+                signal_score = (has_A + has_B + has_E) / n_effective
+            elif regime_mult >= 1.2:  # Bull
+                n_effective = 3.0
+                has_A = 1.5 if 'A' in signal_codes else 0  # A 1.5x
+                has_E = 0.5 if 'E' in signal_codes else 0  # E 0.5x
+                has_B = 1.0 if 'B' in signal_codes else 0
+                signal_score = (has_A + has_B + has_E) / n_effective
+            else:  # Neutral — 等权
+                signal_score = len(signals_fired) / 3.0
+            signal_type = '+'.join(signal_codes)
             # ── 第三级: 盘口确认 ──
             buyable, reason = check_buyable(sym, q)
             if not buyable:

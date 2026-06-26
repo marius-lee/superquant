@@ -43,8 +43,11 @@ def run_step(name, module, args=None):
     elapsed = time.time() - t0
     status = "✅" if result.returncode == 0 else f"❌({result.returncode})"
     print(f"  {status} {elapsed:.0f}s")
-    if result.stderr and result.returncode != 0:
-        print(f"  [err] {result.stderr[-300:]}")
+    if result.returncode != 0:
+        # 关键步骤失败时输出完整错误 (来源: 2026-06-26 train.py崩了被吞)
+        print(f"  [stderr] {result.stderr.strip()[-1000:]}" if result.stderr else "  [stderr] (empty)")
+        if result.stdout.strip():
+            print(f"  [stdout] {result.stdout.strip()[-500:]}")
     return result.returncode
 
 

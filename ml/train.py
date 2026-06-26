@@ -133,6 +133,7 @@ for sym, rs in daily_data.items():
         if len(feat) < 29:
             feat += [0.0] * (29 - len(feat))
         feat = feat[:29]
+        date_str = r[1]  # date 字段 — 提前定义, Layer 2 需要
         if date_str in mkt_features:
             feat[-3:] = mkt_features[date_str]
         feat = np.clip(feat, -10, 10).tolist()
@@ -151,7 +152,6 @@ for sym, rs in daily_data.items():
         target = max_ret / (1 + downside)
 
         # ── qid: 同一日期=同一排名组 (来源: XGBRanker 要求) ──
-        date_str = r[1]  # date 字段
         if date_str not in date_to_qid:
             date_to_qid[date_str] = _next_qid
             _next_qid += 1
