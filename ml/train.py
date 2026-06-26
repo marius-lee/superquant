@@ -88,7 +88,7 @@ for d in all_dates:
         for r in rs:
             if r[1] == d:
                 total += 1
-                if float(r[4]) > float(r[3]): up += 1
+                if float(r[5]) > float(r[2]): up += 1  # close>open=上涨
                 break
     breadth = up/max(total,1)
     mkt_features[d] = [round(idx_20d,4), round(idx_60d_vol,4), round(breadth,4)]
