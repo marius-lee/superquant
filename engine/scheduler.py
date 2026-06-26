@@ -132,7 +132,7 @@ def post_market():
 
 
 def _post_review():
-    """复盘: 今日收益/信号/异常总结。"""
+    """复盘: 今日收益/信号/异常 + 蒙特卡洛信号验证。"""
     import sqlite3
     today = date.today().isoformat()
     print(f"\n{'='*40}")
@@ -140,10 +140,8 @@ def _post_review():
     print(f"{'='*40}")
     try:
         conn = sqlite3.connect(os.path.join(os.path.expanduser("~/project/quant"), "data", "trades.db"))
-        # 交易统计
         buys = conn.execute("SELECT COUNT(*), COALESCE(SUM(price*shares),0) FROM sim_trades WHERE side='buy' AND date=?", (today,)).fetchone()
         sells = conn.execute("SELECT COUNT(*), COALESCE(SUM(pnl),0) FROM sim_trades WHERE side='sell' AND date=?", (today,)).fetchone()
-        # 信号统计
         sigs = conn.execute("SELECT signal, COUNT(*) FROM signal_events WHERE date=? GROUP BY signal", (today,)).fetchall()
         conn.close()
         print(f"  买入: {buys[0]}笔, ¥{buys[1]:,.0f}")
@@ -153,6 +151,30 @@ def _post_review():
             print(f"    {s[0]}: {s[1]}次")
         if buys[0] == 0:
             print(f"  ⚠️ 今日无交易 — 检查候选质量或市场状态")
+
+        # 蒙特卡洛信号检验 (来源: Liang Wenfeng — 每个信号必须过统计验证)
+        print(f"\n  🎲 蒙特卡洛检验:")
+        try:
+            from ops.monte_carlo import test_signal, test_strategy
+            for code in ['A', 'B', 'E']:
+                r = test_signal(code, n_permutations=500)  # 每日500次, 每周3000+次够用
+                if r['n_trades'] >= 5:
+                    print(f"    {code}: p={r['p_value']:.3f} {r['verdict']}")
+                    if not r['is_significant'] and r['percentile'] < 50:
+                        # 自动标记无效信号
+                        import sqlite3 as sq
+                        fc = sq.connect(os.path.join(os.path.expanduser("~/project/quant"), "data", "trades.db"))
+                        fc.execute("UPDATE signal_stats SET win_rate=0 WHERE signal=? AND total_count>0", (code,))
+                        fc.commit(); fc.close()
+                        print(f"      ⚠️ {code} 不如随机, 已自动降权")
+                else:
+                    print(f"    {code}: 数据不足 (n={r['n_trades']})")
+            # 策略整体检验
+            s = test_strategy(n_permutations=500)
+            if s.get('n_trades', 0) >= 10:
+                print(f"  策略整体: p={s.get('p_total',1):.3f} {s.get('verdict','')}")
+        except Exception as e:
+            print(f"    ❌ 蒙特卡洛异常: {e}")
     except Exception as e:
         print(f"  ❌ 复盘异常: {e}")
 
