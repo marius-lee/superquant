@@ -54,9 +54,8 @@ def run_step(name, module, args=None):
 def pre_market():
     """盘前流程: 8:45"""
     errors = 0
-    errors += run_step("日线同步", "data.daily_sync")     # Sina→market.db (先拉数据)
-    errors += run_step("日线导出", "scripts.export_daily", ["--market", "all"])
-    errors += run_step("ML 预测", "ml.predict")          # XGBoost → Top20候选
+    errors += run_step("日线同步", "data.daily_sync")
+    errors += run_step("ML 预测", "ml.predict")
     if errors > 0:
         print(f"⚠️ 盘前流程 {errors} 步失败")
     return errors
@@ -75,8 +74,7 @@ def post_market():
     """盘后流程: 15:05"""
     errors = 0
     errors += run_step("分钟存储", "data.minute_store", ["--market", "all", "--today"])
-    errors += run_step("ML 训练", "ml.train")           # 用最新数据重训模型
-    errors += run_step("L3 回补", "ml.build_features", ["--l3", "--start", "0", "--count", "10"])
+    errors += run_step("ML 训练", "ml.train")
     if errors > 0:
         print(f"⚠️ 盘后流程 {errors} 步失败")
     return errors
@@ -85,8 +83,7 @@ def post_market():
 def full_cycle():
     """全流程 (非交易时间可用)"""
     errors = 0
-    errors += run_step("日线同步", "data.daily_sync")     # Sina→market.db
-    errors += run_step("日线导出", "scripts.export_daily", ["--market", "all"])
+    errors += run_step("日线同步", "data.daily_sync")
     errors += run_step("ML 预测", "ml.predict")
     errors += run_step("ML 训练", "ml.train")
     if errors > 0:
