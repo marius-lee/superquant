@@ -1,0 +1,53 @@
+/* superquant · 暗色主题 (参考 quant 系统布局) */
+:root {
+  --bg: #0f0f11; --card: #1a1a1f; --border: #2a2a30;
+  --text: #e4e4e7; --muted: #71717a; --accent: #3b82f6;
+  --up: #ef4444; --down: #10b981;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:var(--bg); color:var(--text); font:14px/1.5 -apple-system,sans-serif; padding:16px; max-width:900px; margin:0 auto; }
+
+/* Capital bar */
+#capital-bar { padding:14px 20px; background:var(--card); border-radius:12px; margin-bottom:12px; }
+.capital-row { display:flex; align-items:center; gap:10px; }
+.capital-row.secondary { margin-top:4px; font-size:13px; color:var(--muted); }
+.capital-row.secondary span:last-child { color:var(--text); font-weight:600; }
+#capital-amount { font-size:28px; font-weight:800; }
+#capital-return { font-size:16px; margin-left:auto; font-weight:600; }
+
+/* Mood bar */
+#mood-bar { display:flex; align-items:center; gap:12px; padding:16px 20px;
+  background:var(--card); border-radius:12px; margin-bottom:16px; }
+#mood-icon { font-size:32px; }
+#mood-label { font-size:16px; font-weight:600; }
+#mood-position { margin-left:auto; color:var(--muted); font-size:13px; }
+
+/* Signals */
+.section-title { font-size:16px; font-weight:600; margin:20px 0 10px; }
+.signal-card { background:var(--card); border-radius:10px; padding:14px 16px; margin-bottom:8px; border-left:4px solid var(--accent); }
+.sig-symbol { font-size:18px; font-weight:700; }
+.sig-mode { font-size:12px; color:var(--muted); background:#2a2a30; padding:1px 6px; border-radius:4px; }
+.sig-price { font-size:16px; font-weight:500; margin:4px 0; }
+.sig-meta { font-size:12px; color:var(--muted); }
+.empty { color:var(--muted); text-align:center; padding:24px; }
+
+/* Position table */
+.pos-table { width:100%; border-collapse:collapse; font-size:13px; table-layout:fixed; }
+.pos-table th { text-align:left; color:var(--muted); font-weight:500; padding:6px 6px; border-bottom:2px solid var(--border); font-size:11px; }
+.pos-table td { padding:6px 6px; border-bottom:1px solid var(--border); overflow:hidden; text-overflow:ellipsis; }
+.pos-table td:last-child, .pos-table th:last-child { text-align:right; }
+.pos-table .sub { font-size:10px; color:var(--muted); margin-top:1px; }
+.pos-table .up { color:var(--up); font-weight:600; }
+.pos-table .down { color:var(--down); font-weight:600; }
+#positions-panel { overflow-x:auto; }
+
+/* Trade rows */
+.trade-row { padding:6px 0; border-bottom:1px solid var(--border); font-size:12px; }
+.trade-row.buy { color:var(--up); }
+.trade-row.sell { color:var(--down); }
+
+/* Status bar */
+#status-bar { display:flex; align-items:center; gap:8px; padding:10px 0; margin-top:24px;
+  border-top:1px solid var(--border); color:var(--muted); font-size:12px; }
+#status-dot { font-size:10px; }
+#update-time { margin-left:auto; }

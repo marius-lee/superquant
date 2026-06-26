@@ -27,7 +27,7 @@ def build_l2_batch(conn):
     import h5py
     log.info("L2 技术特征")
     dates = {r[0] for r in conn.execute("SELECT DISTINCT date FROM daily WHERE date>='2025-06-01'").fetchall()}
-    syms = [r[0] for r in conn.execute("SELECT DISTINCT symbol FROM daily ORDER BY symbol").fetchall()]
+    syms = [r[0] for r in conn.execute("SELECT DISTINCT symbol FROM daily ORDER BY symbol").fetchall() if not r[0].startswith('920')]
     total, inserted = len(syms), 0
     for i, sym in enumerate(syms):
         mkt = 'sh' if sym.startswith(('6','5','9')) else 'sz'
@@ -63,7 +63,7 @@ def build_l2_batch(conn):
         if (i+1)%500==0: conn.commit(); log.info(f"  L2 {i+1}/{total} ({inserted}) {time.time()-t_start:.0f}s")
     conn.commit(); log.info(f"L2 完成: {inserted}条, {time.time()-t_start:.0f}s")
 
-def _l3_worker(syms_chunk, chunk_id, start_day, count_days):
+def _l3_worker(syms_chunk, chunk_id, start_day, count_days, db_path=None, write_lock=None):
     import easy_tdx as et
     tid = f"L3-{chunk_id}"
     client = et.TdxClient()
@@ -71,6 +71,7 @@ def _l3_worker(syms_chunk, chunk_id, start_day, count_days):
     except Exception as e: log.error(f"  [{tid}] 连接失败: {e}"); return []
     local, success, fail = [], 0, 0
     t0 = time.time()
+    total_written = 0
     for i, sym in enumerate(syms_chunk):
         try:
             mkt = et.Market.SZ if sym.startswith(('0','3')) else et.Market.SH
@@ -85,26 +86,40 @@ def _l3_worker(syms_chunk, chunk_id, start_day, count_days):
                 success += 1
             else: fail += 1
         except: fail += 1
-        if (i+1)%200==0:
+        # 增量写入: 每200只股票刷一次DB (锁保护, 避免WAL竞争导致close()死锁)
+        if (i+1)%200==0 and db_path:
+            if write_lock:
+                write_lock.acquire()
+            try:
+                wconn = sqlite3.connect(db_path, timeout=10)
+                wconn.execute("PRAGMA journal_mode=WAL")
+                wconn.executemany("INSERT OR REPLACE INTO daily_features(symbol,date,main_net_in,main_net_ratio,super_large_in,large_in) VALUES(?,?,?,?,?,?)", local)
+                wconn.commit(); wconn.close()
+                total_written += len(local); local = []
+            except Exception as e:
+                log.warning(f"  [{tid}] 写入失败(200只): {e}")
+            finally:
+                if write_lock:
+                    write_lock.release()
             elapsed = time.time()-t0
             est = elapsed/(i+1)*len(syms_chunk) if i>0 else 0
-            log.info(f"  [{tid}] {i+1}/{len(syms_chunk)}(成功{success}/失败{fail}) {elapsed:.0f}s 预计{est:.0f}s")
+            log.info(f"  [{tid}] {i+1}/{len(syms_chunk)}(成功{success}/失败{fail}) {elapsed:.0f}s 预计{est:.0f}s | DB累计{total_written}条")
     elapsed = time.time()-t0
-    log.info(f"  [{tid}] 完成: 成功{success}/失败{fail}, {elapsed:.0f}s")
-    client.close(); return local
+    log.info(f"  [{tid}] 完成: 成功{success}/失败{fail}, {elapsed:.0f}s | DB累计{total_written}条")
+    client.close(); return local  # 返回剩余未写入的批次
 
 def build_l3_batch(conn, start_day=0, count_days=10):
     """L3: easy-tdx 资金流 4线程并行。
     用法: --start 1 --count 10 → start=1=昨天,count=10=往回10天"""
     import easy_tdx as et
     log.info(f"开始 L3 资金流 (start={start_day}, count={count_days}, 4线程)")
-    syms = [r[0] for r in conn.execute("SELECT DISTINCT symbol FROM daily ORDER BY symbol").fetchall()]
-    log.info(f"  总{len(syms)}只, 全量拉取 (INSERT OR REPLACE 自动去重)")
+    syms = [r[0] for r in conn.execute("SELECT DISTINCT symbol FROM daily ORDER BY symbol").fetchall() if not r[0].startswith('920')]
+    log.info(f"  总{len(syms)}只 (排除BSE), 全量拉取 (INSERT OR REPLACE 自动去重)")
     n=len(syms); cs=(n+3)//4; chunks=[syms[i:i+cs] for i in range(0,n,cs)]
     log.info(f"  4组: {[len(c) for c in chunks]}")
-    results={}; lock=threading.Lock()
+    results={}; write_lock=threading.Lock()
     with ThreadPoolExecutor(max_workers=4) as ex:
-        fs={ex.submit(_l3_worker,ch,i,start_day,count_days):i for i,ch in enumerate(chunks)}
+        fs={ex.submit(_l3_worker,ch,i,start_day,count_days,DB_PATH,write_lock):i for i,ch in enumerate(chunks)}
         for f in as_completed(fs): results[fs[f]]=f.result()
     total=0
     for cid in range(4):

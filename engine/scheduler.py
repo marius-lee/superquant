@@ -2,14 +2,9 @@
 """定时调度引擎 — cron 编排。
 
 时间表:
-  08:45 → 日线更新 (P0a export_daily --market all)
-  08:50 → 因子计算 (app/factors)
-  08:55 → 参数加载 (auto_tuner)
+  08:45 → 日线同步 + 日线导出 + ML 预测
   09:30-15:00 → 模拟交易 (trader/paper_trader)
-  15:05 → 分钟数据存储 (P0b minute_store --market all --today)
-  15:10 → IC回测 + 参数研究 (researcher)
-  15:15 → 策略调整 (auto_tuner)
-  15:30 → 复盘报告
+  15:05 → 分钟数据存储 + ML 重训 + L3 回补
 
 用法:
   python engine/scheduler.py --mode daily     # 每日运行模式
@@ -56,9 +51,9 @@ def run_step(name, module, args=None):
 def pre_market():
     """盘前流程: 8:45"""
     errors = 0
-    errors += run_step("日线更新", "scripts.export_daily", ["--market", "all"])
+    errors += run_step("日线同步", "data.daily_sync")     # Sina→market.db (先拉数据)
+    errors += run_step("日线导出", "scripts.export_daily", ["--market", "all"])
     errors += run_step("ML 预测", "ml.predict")          # XGBoost → Top20候选
-    errors += run_step("参数调整", "engine.auto_tuner")
     if errors > 0:
         print(f"⚠️ 盘前流程 {errors} 步失败")
     return errors
@@ -79,7 +74,6 @@ def post_market():
     errors += run_step("分钟存储", "data.minute_store", ["--market", "all", "--today"])
     errors += run_step("ML 训练", "ml.train")           # 用最新数据重训模型
     errors += run_step("L3 回补", "ml.build_features", ["--l3", "--start", "0", "--count", "10"])
-    errors += run_step("策略调整", "engine.auto_tuner")
     if errors > 0:
         print(f"⚠️ 盘后流程 {errors} 步失败")
     return errors
@@ -88,10 +82,10 @@ def post_market():
 def full_cycle():
     """全流程 (非交易时间可用)"""
     errors = 0
-    errors += run_step("日线更新", "scripts.export_daily", ["--market", "all"])
+    errors += run_step("日线同步", "data.daily_sync")     # Sina→market.db
+    errors += run_step("日线导出", "scripts.export_daily", ["--market", "all"])
     errors += run_step("ML 预测", "ml.predict")
     errors += run_step("ML 训练", "ml.train")
-    errors += run_step("策略调整", "engine.auto_tuner")
     if errors > 0:
         print(f"⚠️ 全流程 {errors} 步失败")
     return errors

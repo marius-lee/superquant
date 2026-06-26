@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- 三级漏斗: 三层渐窄色块, 向上箭头 -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#e15241"/>
+      <stop offset="50%" stop-color="#f0883e"/>
+      <stop offset="100%" stop-color="#ffd700"/>
+    </linearGradient>
+  </defs>
+  <!-- 底部层 (最宽) -->
+  <rect x="4" y="24" width="24" height="4" rx="1" fill="#e15241" opacity="0.8"/>
+  <!-- 中层 -->
+  <rect x="8" y="16" width="16" height="4" rx="1" fill="#f0883e" opacity="0.8"/>
+  <!-- 顶层 (最窄) -->
+  <rect x="12" y="8" width="8" height="4" rx="1" fill="#ffd700" opacity="0.9"/>
+  <!-- 向上箭头 -->
+  <polygon points="16,1 11,8 14,8 14,8 14,6 18,6 18,8 21,8" fill="url(#g)"/>
+  <!-- S 简写 -->
+  <text x="16" y="31" text-anchor="middle" font-size="7" font-weight="bold" fill="#c9d1d9" font-family="monospace">SQ</text>
+</svg>

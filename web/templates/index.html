@@ -3,55 +3,104 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>superquant — 攻击性涨停捕捉</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<title>superquant — V3 三级漏斗</title>
 <style>
-* { margin:0; padding:0; box-sizing:border-box; }
-body { font-family: -apple-system, 'SF Mono', monospace; background:#0d1117; color:#c9d1d9; padding:16px; }
-h2 { font-size:16px; margin-bottom:8px; color:#58a6ff; }
-.card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:12px; margin-bottom:12px; }
-.row { display:flex; gap:12px; flex-wrap:wrap; }
-.col { flex:1; min-width:280px; }
-table { width:100%; border-collapse:collapse; font-size:13px; }
-th, td { padding:6px 8px; text-align:left; border-bottom:1px solid #21262d; }
-th { color:#8b949e; font-weight:500; }
-.up { color:#e15241; } .down { color:#4caf50; }
-.buy { color:#e15241; } .sell { color:#4caf50; }
-.badge { display:inline-block; padding:2px 8px; border-radius:12px; font-size:11px; }
-.badge-buy { background:#e1524133; color:#e15241; }
-.badge-sell { background:#4caf5033; color:#4caf50; }
-.badge-active { background:#ffd70033; color:#ffd700; }
-.badge-pending { background:#58a6ff33; color:#58a6ff; }
-.metric { font-size:24px; font-weight:bold; }
-.metric-label { font-size:11px; color:#8b949e; }
-.progress-bar { height:20px; background:#21262d; border-radius:10px; overflow:hidden; margin:8px 0; }
-.progress-fill { height:100%; background:linear-gradient(90deg,#e15241,#f0883e); transition:width 0.5s; }
-#status { color:#8b949e; font-size:11px; }
-.layer-item { display:flex; justify-content:space-between; align-items:center; padding:4px 0; border-bottom:1px solid #21262d; font-size:13px; }
-.layer-count { font-weight:bold; }
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,'SF Mono',monospace;background:#0d1117;color:#c9d1d9;padding:16px}
+h2{font-size:16px;margin-bottom:8px;color:#58a6ff}
+.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px;margin-bottom:12px}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.col{flex:1;min-width:280px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:6px 8px;text-align:left;border-bottom:1px solid #21262d}
+th{color:#8b949e;font-weight:500}
+.metric{font-size:24px;font-weight:bold}
+.metric-label{font-size:11px;color:#8b949e}
+.progress-bar{height:20px;background:#21262d;border-radius:10px;overflow:hidden;margin:8px 0}
+.progress-fill{height:100%;background:linear-gradient(90deg,#e15241,#f0883e);transition:width .5s}
+#status{color:#8b949e;font-size:11px}
+#l3-info{font-size:12px;color:#8b949e}
+
+/* 资本栏 (增量: 只在原配色上加) */
+#capital-bar { padding:14px 20px; background:#161b22; border:1px solid #30363d; border-radius:8px; margin-bottom:12px; }
+.capital-row { display:flex; align-items:center; gap:10px; }
+.capital-row.secondary { margin-top:4px; font-size:13px; color:#8b949e; }
+.capital-row.secondary span:last-child { color:#c9d1d9; font-weight:600; }
+#capital-amount { font-size:28px; font-weight:800; }
+#capital-return { font-size:16px; margin-left:auto; font-weight:600; }
+
+/* 持仓表 (增量) */
+.pos-table { width:100%; border-collapse:collapse; font-size:13px; table-layout:fixed; }
+.pos-table th { text-align:left; color:#8b949e; font-weight:500; padding:6px 6px; border-bottom:2px solid #21262d; font-size:11px; }
+.pos-table td { padding:6px 6px; border-bottom:1px solid #21262d; overflow:hidden; text-overflow:ellipsis; }
+.pos-table td:last-child, .pos-table th:last-child { text-align:right; }
+.pos-table .sub { font-size:10px; color:#8b949e; margin-top:1px; }
+.pos-table .up { color:#e15241; font-weight:600; }
+.pos-table .down { color:#4caf50; font-weight:600; }
 </style>
 </head>
 <body>
 
-<h2>🚀 superquant — 攻击性涨停捕捉</h2>
+<h2>superquant V3 — 三级漏斗</h2>
 <div id="status">加载中...</div>
 
+<!-- 资本栏 (旧系统风格) -->
+<div id="capital-bar">
+  <div class="capital-row">
+    <span>💰</span>
+    <span id="capital-amount">¥5,000</span>
+    <span id="capital-return"></span>
+  </div>
+  <div class="capital-row secondary">
+    <span>💵 可用</span>
+    <span id="capital-available">¥5,000</span>
+  </div>
+  <div class="capital-row secondary">
+    <span id="perf-stats" style="font-size:11px;color:#8b949e"></span>
+  </div>
+</div>
+
 <div class="row">
   <div class="col">
     <div class="card">
-      <div class="metric-label">💰 模拟账户</div>
-      <div class="metric" id="equity">¥5,000</div>
-      <div style="font-size:12px;color:#8b949e">
-        可用: <span id="cash">¥5,000</span> | 持仓: <span id="npos">0</span>只
-      </div>
+      <div class="metric-label">北极星 ¥5000 → ¥100万</div>
+      <div class="progress-bar"><div class="progress-fill" id="ns-bar" style="width:0%"></div></div>
+      <div style="font-size:12px;color:var(--muted)"><span id="ns-pct">0%</span> | 剩余 <span id="ns-left">-</span></div>
     </div>
   </div>
   <div class="col">
     <div class="card">
-      <div class="metric-label">🎯 北极星进度</div>
-      <div class="progress-bar"><div class="progress-fill" id="northstar-bar" style="width:0%"></div></div>
-      <div style="font-size:12px;color:#8b949e">
-        进度: <span id="northstar-pct">0%</span> | 距目标 <span id="ns-remaining">¥995,000</span>
-      </div>
+      <div class="metric-label">市场状态</div>
+      <div style="font-size:13px" id="mood-label">-</div>
+    </div>
+  </div>
+</div>
+
+<!-- 持仓 -->
+<div id="positions-panel" style="display:none">
+  <div class="card">
+    <div class="metric-label">💼 持仓 <span id="pos-count"></span></div>
+    <div id="position-list"></div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col">
+    <div class="card">
+      <div class="metric-label">实时信号</div>
+      <table><thead><tr><th>时间</th><th>股票</th><th>信号</th><th>动作</th></tr></thead>
+        <tbody id="sig-body"><tr><td colspan=4 style="color:var(--muted)">-</td></tr></tbody>
+      </table>
+      <div id="sig-weights" style="font-size:10px;color:var(--muted);margin-top:4px;border-top:1px solid var(--border);padding-top:4px">信号权重: -</div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="card">
+      <div class="metric-label">最近交易</div>
+      <table><thead><tr><th>时间</th><th>股票</th><th>方向</th><th>价格</th><th>盈亏</th></tr></thead>
+        <tbody id="trade-body"><tr><td colspan=5 style="color:var(--muted)">-</td></tr></tbody>
+      </table>
     </div>
   </div>
 </div>
@@ -59,18 +108,8 @@ th { color:#8b949e; font-weight:500; }
 <div class="row">
   <div class="col">
     <div class="card">
-      <div class="metric-label">🎯 ML 涨停预测 (XGBoost AUC=0.96)</div>
-      <div id="candidate-info" style="font-size:12px;color:#8b949e">加载中...</div>
-      <table id="candidate-table" style="margin-top:4px">
-        <thead><tr><th>#</th><th>股票</th><th>P(涨停)</th></tr></thead>
-        <tbody><tr><td colspan=3>待模型运行...</td></tr></tbody>
-      </table>
-    </div>
-  </div>
-  <div class="col">
-    <div class="card">
-      <div class="metric-label">📊 数据回补 (L3资金流)</div>
-      <div id="l3-info" style="font-size:12px;color:#8b949e">加载中...</div>
+      <div class="metric-label">📊 绩效指标</div>
+      <div id="metrics-info" style="font-size:12px;color:#8b949e">-</div>
     </div>
   </div>
 </div>
@@ -78,90 +117,211 @@ th { color:#8b949e; font-weight:500; }
 <div class="row">
   <div class="col">
     <div class="card">
-      <div class="metric-label">📝 最近交易</div>
-      <table>
-        <thead><tr><th>时间</th><th>股票</th><th>方向</th><th>价格</th><th>盈亏</th><th>原因</th></tr></thead>
-        <tbody id="trades-body"><tr><td colspan=6>无交易</td></tr></tbody>
+      <div class="metric-label">XGBRanker 排序预测 (Rank IC=0.37)</div>
+      <div id="cand-info" style="font-size:12px;color:var(--muted)">-</div>
+      <div style="font-size:10px;color:var(--muted);margin:4px 0;border-left:2px solid #58a6ff;padding-left:6px">
+        分数 = z-score | <b>2.5+</b>=前0.6% | <b>2.0+</b>=前2% | <b>1.0+</b>=前16%
+      </div>
+      <table><thead><tr><th>#</th><th>代码</th><th>名称</th><th>分数</th></tr></thead>
+        <tbody id="cand-body"><tr><td colspan=4>...</td></tr></tbody>
       </table>
     </div>
   </div>
   <div class="col">
     <div class="card">
-      <div class="metric-label">⚙️ 系统状态</div>
-      <div style="font-size:12px;color:#8b949e">
-        策略: XGBoost (26特征, AUC=0.96)<br>
-        数据: Sina + easy-tdx + HDF5 + AKShare (全免费)<br>
-        扫描: 5s | ML每日自动更新
-      </div>
+      <div class="metric-label">拒绝信号</div>
+      <table><thead><tr><th>时间</th><th>股票</th><th>价格</th><th>原因</th></tr></thead>
+        <tbody id="rej-body"><tr><td colspan=4 style="color:var(--muted)">-</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col">
+    <div class="card">
+      <div class="metric-label">L3 回补进度</div>
+      <div id="l3-info">-</div>
     </div>
   </div>
 </div>
 
 <script>
-const API='';
-function $(id){return document.getElementById(id);}
+var $ = function(id) { return document.getElementById(id); };
 
-async function refresh() {
+function refresh() {
   try {
-    const [state, candidates, northstar, positions, trades, l3] = await Promise.all([
-      fetch(API+'/api/state').then(r=>r.json()),
-      fetch(API+'/api/candidates').then(r=>r.json()),
-      fetch(API+'/api/northstar').then(r=>r.json()),
-      fetch(API+'/api/positions').then(r=>r.json()),
-      fetch(API+'/api/trades').then(r=>r.json()),
-      fetch(API+'/api/l3-progress').then(r=>r.json()),
-    ]);
-    $('equity').textContent='¥'+state.equity.toLocaleString();
-    $('cash').textContent='¥'+state.cash.toLocaleString();
-    $('npos').textContent=state.n_positions;
-    if(northstar&&northstar.progress_pct!=null){
-      $('northstar-pct').textContent=northstar.progress_pct.toFixed(1)+'%';
-      $('northstar-bar').style.width=Math.min(northstar.progress_pct,100)+'%';
-      $('ns-remaining').textContent='¥'+Math.round(northstar.remaining||0).toLocaleString();
-    }
-    // ML候选 (双通道)
-    if(candidates&&candidates.main&&candidates.main.length>0){
-      $('candidate-info').textContent=candidates.date+' | '+candidates.count+'只候选 | '+candidates.model;
-      let html='';
-      candidates.main.forEach((c,i)=>{
-        let cls=c.prob>0.95?'up':c.prob>0.8?'badge-active':'';
-        html+='<tr><td>'+(i+1)+'</td><td>'+c.symbol+'</td><td class="'+cls+'">'+(c.prob*100).toFixed(1)+'%</td></tr>';
-      });
-      if(candidates.discovery&&candidates.discovery.length>0){
-        candidates.discovery.forEach((c,i)=>{
-          html+='<tr style="opacity:0.7"><td>🔍</td><td>'+c.symbol+'</td><td style="color:#ffd700">'+(c.prob*100).toFixed(1)+'%</td></tr>';
-        });
+    $('status').textContent = '刷新中...';
+
+    fetch('/api/state').then(function(r){return r.json()}).then(function(state){
+      var cash = state.cash || 5000;
+      var equity = state.equity || 5000;
+      var initial = state.initial_capital || 5000;
+      var ret = (equity / initial - 1) * 100;
+      $('capital-amount').textContent = '¥' + equity.toLocaleString();
+      $('capital-available').textContent = '¥' + cash.toLocaleString();
+      var retEl = $('capital-return');
+      retEl.textContent = (ret>=0?'+':'') + ret.toFixed(1) + '%';
+      retEl.style.color = ret>=0 ? '#e15241' : '#4caf50';
+      // 市场状态
+      var r = state.regime;
+      if (r) $('mood-label').textContent = (r.label||'') + ' · ' + (r.desc||'');
+      // 绩效行
+      var p = state.performance || {};
+      var rp = p.realized_pnl || 0;
+      var up = p.unrealized_pnl || 0;
+      $('perf-stats').textContent = '已实现: ¥'+(rp>=0?'+':'')+rp.toFixed(2)+
+        ' | 浮动: ¥'+(up>=0?'+':'')+up.toFixed(2)+
+        ' | 总计: ¥'+(p.total_pnl>=0?'+':'')+(p.total_pnl||0).toFixed(2)+
+        ' | '+(p.buy_count||0)+'买 '+(p.sell_count||0)+'卖'+
+        ' | 胜率: '+(p.win_rate||0)+'%';
+    }).catch(function(e){ $('status').textContent = '❌ state: '+e.message; });
+
+    fetch('/api/positions').then(function(r){return r.json()}).then(function(ps){
+      var panel = $('positions-panel');
+      var list = $('position-list');
+      var count = $('pos-count');
+      if (!ps || ps.length===0) {
+        panel.style.display = 'none';
+        return;
       }
-      $('candidate-table').querySelector('tbody').innerHTML=html;
-    } else {
-      $('candidate-info').textContent='待运行 ml/predict.py';
-    }
-    // L3进度
-    if(l3){
-      $('l3-info').innerHTML='状态: '+l3.status+' | 覆盖: '+l3.days+'天/'+l3.rows+'条<br>'+l3.date_range+' | '+l3.last_log;
-    }
-    // 持仓
-    if(positions.length>0){
-      let html='';
-      positions.forEach(p=>{html+='<tr><td>'+p.symbol+'</td><td>¥'+p.price+'</td><td>'+p.shares+'</td><td><span class="badge badge-buy">'+p.reason+'</span></td></tr>';});
-      $('positions-body').innerHTML=html;
-    }
-    // 交易
-    if(trades.length>0){
-      let html='';
-      trades.slice(0,10).forEach(t=>{
-        let sideCls=t.side==='buy'?'buy':'sell';
-        let pnlCls=(t.pnl||0)>0?'up':'down';
-        html+='<tr><td>'+(t.time||t.date).slice(0,19)+'</td><td>'+t.symbol+'</td><td class="'+sideCls+'">'+t.side+'</td><td>¥'+t.price+'</td><td class="'+pnlCls+'">'+(t.pnl||0).toFixed(0)+'</td><td>'+t.reason+'</td></tr>';
+      panel.style.display = 'block';
+      count.textContent = ps.length+'只';
+      var h = '<table class="pos-table"><thead><tr>'+
+        '<th>代码</th><th>名称</th><th>数量</th><th>成本</th><th>现价</th><th>盈亏</th><th>市值</th>'+
+      '</tr></thead><tbody>';
+      ps.forEach(function(p) {
+        var cost = p.price || 0;
+        var current = p.current || cost;
+        var pnl = cost>0 ? ((current/cost - 1)*100) : 0;
+        var value = p.shares * current;
+        var cls = pnl>=0 ? 'up' : 'down';
+        h += '<tr>'+
+          '<td>'+p.symbol+'<div class="sub">'+(p.buy_date||'')+'</div></td>'+
+          '<td>'+(p.name||'')+'</td>'+
+          '<td>'+p.shares+'股</td>'+
+          '<td>¥'+cost.toFixed(2)+'</td>'+
+          '<td>¥'+current.toFixed(2)+'</td>'+
+          '<td class="'+cls+'">'+(pnl>=0?'+':'')+pnl.toFixed(1)+'%</td>'+
+          '<td>¥'+Math.round(value).toLocaleString()+'</td>'+
+        '</tr>';
       });
-      $('trades-body').innerHTML=html;
-    }
-    $('status').textContent='✅ 实时 '+new Date().toLocaleTimeString();
-  }catch(e){
-    $('status').textContent='❌ '+e.message;
+      h += '</tbody></table>';
+      list.innerHTML = h;
+    }).catch(function(e){ $('status').textContent = '❌ pos: '+e.message; });
+
+    fetch('/api/candidates').then(function(r){return r.json()}).then(function(cands){
+      if (cands.main && cands.main.length > 0) {
+        $('cand-info').textContent = cands.date + ' | ' + cands.count + '只 | ' + cands.model;
+        var h = '';
+        cands.main.slice(0, 20).forEach(function(c, i) {
+          h += '<tr><td>' + (i+1) + '</td><td>' + c.symbol + '</td><td>' + (c.name || '?') + '</td><td>' + c.prob.toFixed(2) + '</td></tr>';
+        });
+        if (cands.discovery && cands.discovery.length > 0) {
+          cands.discovery.forEach(function(c) {
+            h += '<tr style="opacity:0.7"><td>D</td><td>' + c.symbol + '</td><td>' + (c.name || '?') + '</td><td style="color:#ffd700">' + c.prob.toFixed(2) + '</td></tr>';
+          });
+        }
+        $('cand-body').innerHTML = h;
+      }
+    }).catch(function(e){ $('status').textContent = '❌ cands: '+e.message; });
+
+    fetch('/api/northstar').then(function(r){return r.json()}).then(function(ns){
+      if (ns && ns.progress_pct != null) {
+        var pct = ns.progress_pct;
+        $('ns-pct').textContent = (pct < 0.01 ? pct.toFixed(4) : pct < 1 ? pct.toFixed(2) : pct.toFixed(1)) + '%';
+        $('ns-bar').style.width = Math.max(ns.progress_pct, 0.1) + '%';
+        $('ns-left').textContent = '¥' + Math.round(ns.remaining || 0).toLocaleString();
+      }
+    }).catch(function(e){});
+
+    fetch('/api/rejected').then(function(r){return r.json()}).then(function(rej){
+      if (rej.rejected && rej.rejected.length > 0) {
+        var h = '';
+        rej.rejected.slice(0, 20).forEach(function(r) {
+          h += '<tr><td>' + r.time + '</td><td>' + r.symbol + '</td><td>¥' + r.price.toFixed(2) + '</td><td style="color:#f0883e">' + r.reason + '</td></tr>';
+        });
+        $('rej-body').innerHTML = h;
+      }
+    }).catch(function(e){});
+
+    fetch('/api/signals').then(function(r){return r.json()}).then(function(sigs){
+      if (sigs && sigs.length > 0) {
+        var sn = {A:'贝叶斯变点', B:'量价背离', C:'买盘堆积', D:'竞价异常'};
+        var h = '';
+        sigs.slice(0, 20).forEach(function(s) {
+          h += '<tr><td>' + s.time + '</td><td>' + s.symbol + '</td><td style="color:#ffd700">' + (sn[s.signal] || s.signal) + '</td><td>' + s.action + '</td></tr>';
+        });
+        $('sig-body').innerHTML = h;
+      }
+    }).catch(function(e){});
+
+    fetch('/api/signal-stats').then(function(r){return r.json()}).then(function(stats){
+      if (stats) {
+        var sn = {A:'变点', B:'量价', C:'堆积', D:'竞价'};
+        var parts = [];
+        Object.keys(stats).sort().forEach(function(k) {
+          var s = stats[k];
+          parts.push((sn[k]||k) + ':' + (s.win_rate*100).toFixed(0) + '%×' + s.total_count);
+        });
+        $('sig-weights').textContent = '权重: ' + (parts.length > 0 ? parts.join(' | ') : '暂无数据');
+      }
+    }).catch(function(e){});
+
+    fetch('/api/trades').then(function(r){return r.json()}).then(function(trades){
+      if (trades && trades.length > 0) {
+        var h = '';
+        trades.slice(0, 10).forEach(function(t) {
+          var sc = t.side === 'buy' ? 'color:var(--up)' : 'color:var(--down)';
+          var pc = (t.pnl || 0) > 0 ? 'color:var(--up)' : 'color:var(--down)';
+          var ts = (t.time || t.date || '').replace('T',' ').slice(0, 19);
+          h += '<tr><td>' + ts + '</td><td>' + t.symbol + '</td><td style="' + sc + '">' + (t.side==='buy'?'买入':'卖出') + '</td><td>¥' + t.price + '</td><td style="' + pc + '">' + (t.pnl || 0).toFixed(0) + '</td></tr>';
+        });
+        $('trade-body').innerHTML = h;
+      }
+    }).catch(function(e){});
+
+    fetch('/api/metrics').then(function(r){return r.json()}).then(function(m){
+      if (m && m.total_trades > 0) {
+        $('metrics-info').textContent = '夏普:' + m.sharpe.toFixed(2) +
+          ' | 回撤:' + m.max_drawdown.toFixed(1) + '%' +
+          ' | 卡尔玛:' + m.calmar.toFixed(2) +
+          ' | 胜率:' + m.win_rate.toFixed(0) + '%' +
+          ' | 盈亏比:' + m.profit_factor.toFixed(2) +
+          ' | 期望值:¥' + m.expectancy.toFixed(2) +
+          ' | ' + m.total_trades + '笔';
+      } else {
+        $('metrics-info').textContent = '暂无平仓数据';
+      }
+    }).catch(function(e){});
+
+    fetch('/api/l3-progress').then(function(r){return r.json()}).then(function(l3){
+      if (l3 && l3.rows) {
+        var h = l3.status + ' | <b>' + l3.days + '</b>天 / <b>' + l3.rows.toLocaleString() + '</b>条 | ' + (l3.date_range || '');
+        if (l3.threads) {
+          h += '<br><span style="font-size:10px;color:#8b949e">';
+          Object.keys(l3.threads).forEach(function(tid) {
+            var t = l3.threads[tid];
+            if (t.done) {
+              h += tid + ': ✅完成 ';
+            } else {
+              var pct = Math.round(t.cur/t.total*100);
+              h += tid + ': ' + pct + '% ';
+            }
+          });
+          h += '</span>';
+        }
+        $('l3-info').innerHTML = h;
+      }
+    }).catch(function(e){});
+
+    $('status').textContent = '✅ ' + new Date().toLocaleTimeString();
+  } catch(e) {
+    $('status').textContent = '❌ ' + e.message;
   }
 }
-refresh();setInterval(refresh,10000);
+refresh();
+setInterval(refresh, 5000);
 </script>
 </body>
 </html>

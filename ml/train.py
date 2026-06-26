@@ -1,18 +1,30 @@
-"""XGBoost V2: 日线 + DB特征 (L2-L5预计算) → 终极模型。用法: python ml/train_v2.py"""
-import os, sys, time, sqlite3, json, pickle
+"""XGBoost V3: Learning to Rank — 多日最大涨幅排序。
+
+三级漏斗 第一级:
+  5000只 → Top 200
+  XGBRanker objective='rank:ndcg'
+  target = max(1d_return, 3d_return, 5d_return)
+
+来源:
+  Grinold & Kahn: Alpha = Volatility × IC × Score. 回归输出=Score.
+  Narang: α模型的终极目标是横截面收益排序能力.
+  Chan: ML做条件收益预测, 不预测方向.
+
+用法: python ml/train.py
+"""
+import os, sys, time, sqlite3, pickle
 from collections import defaultdict
 import numpy as np
 import xgboost as xgb
 from sklearn.ensemble import IsolationForest
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import roc_auc_score, classification_report
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(os.path.expanduser("~/project/quant"), "data", "market.db")
 
 print("=" * 60)
-print("XGBoost V2: 日线 + L2-L5 DB特征")
+print("XGBoost V3: Learning to Rank (排除BSE, 多日最大涨幅)")
 print("=" * 60)
 
 # ── 1. 加载数据 ──
@@ -20,12 +32,10 @@ print("\n[1/4] 加载...")
 t0 = time.time()
 conn = sqlite3.connect(DB_PATH)
 
-# 检查 daily_features 表是否存在
 has_features = conn.execute(
     "SELECT name FROM sqlite_master WHERE type='table' AND name='daily_features'"
 ).fetchone() is not None
 
-# 主查询: 日线 JOIN 预计算特征
 if has_features:
     sql = """SELECT d.symbol, d.date, d.open, d.high, d.low, d.close, d.volume, d.amount, d.turnover,
                 f.ksft, f.slope, f.ptc, f.vol_5min, f.max_ret, f.min_ret,
@@ -44,25 +54,56 @@ rows = conn.execute(sql).fetchall()
 conn.close()
 print(f"  加载: {len(rows)}行, {time.time()-t0:.0f}s")
 
-# ── 2. 特征 + 标签 ──
-print("\n[2/4] 特征工程...")
+# ── 2. 特征 + target ──
+print("\n[2/4] 特征工程 (target = max(1d, 3d, 5d return))...")
 t0 = time.time()
 daily_data = defaultdict(list)
 for r in rows:
     daily_data[r[0]].append(r)
 
-X_list, y_list = [], []
+X_list, y_list, qid_list = [], [], []
+date_to_qid = {}
+_next_qid = 0
 n_cols = len(rows[0])
-n_feat = min(n_cols - 2, 26)  # 减去symbol+date
+
+# ── 预计算市场特征 (Layer 2: 每交易日大盘指标) ──
+mkt_features = {}
+all_dates = sorted(set(r[1] for rs in daily_data.values() for r in rs))
+idx_data = {r[1]: float(r[4]) for sym, rs in daily_data.items() if sym == '000001' for r in rs}
+for d in all_dates:
+    prev_dates = [dd for dd in all_dates if dd <= d]
+    d_idx = prev_dates.index(d)
+    i20 = prev_dates[max(0,d_idx-19):d_idx+1]
+    idx_20d = (idx_data[i20[-1]] / idx_data[i20[0]] - 1) if len(i20)>=10 and i20[0] in idx_data and i20[-1] in idx_data else 0
+    i60 = prev_dates[max(0,d_idx-59):d_idx+1]
+    if len(i60) >= 30:
+        i_cl = [idx_data[dd] for dd in i60 if dd in idx_data]
+        if len(i_cl)>5:
+            i_rets = np.diff(i_cl) / np.array(i_cl[:-1])
+            idx_60d_vol = float(np.std(i_rets))
+        else: idx_60d_vol = 0.0
+    else: idx_60d_vol = 0.0
+    up = total = 0
+    for _, rs in daily_data.items():
+        for r in rs:
+            if r[1] == d:
+                total += 1
+                if float(r[4]) > float(r[3]): up += 1
+                break
+    breadth = up/max(total,1)
+    mkt_features[d] = [round(idx_20d,4), round(idx_60d_vol,4), round(breadth,4)]
+mkt_computed = True
 
 for sym, rs in daily_data.items():
-    if len(rs) < 32: continue
+    if sym.startswith('920'): continue  # 排除 BSE
+    if len(rs) < 38: continue           # 需要未来5天数据
     closes = np.array([float(r[4]) for r in rs])
-    for i in range(25, len(rs)-1):
+
+    for i in range(30, len(rs) - 6):    # 留6天做未来计算
         r = rs[i]
         if closes[i-1] <= 0: continue
 
-        # 日线特征 (10个)
+        # ── 日线特征 (10个) ──
         ret_1d = closes[i]/closes[i-1]-1
         ret_5d = closes[i]/closes[i-5]-1 if i>=5 and closes[i-5]>0 else 0
         vols_5 = np.array([float(rs[j][5]) for j in range(i-4,i+1)])
@@ -78,7 +119,7 @@ for sym, rs in daily_data.items():
         ma_dev = closes[i]/ma20-1 if ma20>0 else 0
         base = [ret_1d,ret_5d,vol_ratio,vol_5d,gap,turnover,amt_log,hl_ratio,close_pos,ma_dev]
 
-        # L2-L5特征 (从DB, 如果存在)
+        # ── L2-L5特征 ──
         extra = []
         if has_features and len(r) > 9:
             for v in r[9:]:
@@ -87,53 +128,155 @@ for sym, rs in daily_data.items():
             extra = [0.0] * 16
 
         feat = base + extra
-        if any(abs(v)>100 for v in feat): continue
-        next_ret = closes[i+1]/closes[i]-1 if closes[i]>0 else 0
-        label = 1 if next_ret>=0.095 else 0
+        # Layer 2: 市场状态特征 (idx_20d_ret, idx_60d_vol, mkt_breadth)
+        feat += [0.0, 0.0, 0.0]
+        if len(feat) < 29:
+            feat += [0.0] * (29 - len(feat))
+        feat = feat[:29]
+        if date_str in mkt_features:
+            feat[-3:] = mkt_features[date_str]
+        feat = np.clip(feat, -10, 10).tolist()
+
+        # ── target: 多日最大涨幅 (来源: 三级漏斗 — 找连涨/大涨潜力) ──
+        r1 = closes[i+1]/closes[i] - 1
+        r3 = closes[min(i+3, len(closes)-2)]/closes[i] - 1
+        r5 = closes[min(i+5, len(closes)-2)]/closes[i] - 1
+        max_ret = max(r1, r3, r5)
+        # Sortino 调整: 过程中最低点惩罚 (来源: 下跌波动率惩罚, 过滤会被止损斩仓的票)
+        min_path = r1
+        for offset in range(2, 6):
+            if i + offset < len(closes):
+                min_path = min(min_path, closes[i+offset]/closes[i] - 1)
+        downside = abs(min(0, min_path))
+        target = max_ret / (1 + downside)
+
+        # ── qid: 同一日期=同一排名组 (来源: XGBRanker 要求) ──
+        date_str = r[1]  # date 字段
+        if date_str not in date_to_qid:
+            date_to_qid[date_str] = _next_qid
+            _next_qid += 1
+        qid = date_to_qid[date_str]
+
         X_list.append(feat)
-        y_list.append(label)
+        y_list.append(target)
+        qid_list.append(qid)
 
 X = np.array(X_list, dtype=np.float32)
-y = np.array(y_list, dtype=np.int32)
-print(f"  {X.shape}, 正样本: {y.sum()} ({y.sum()/len(y)*100:.1f}%)")
+y_raw = np.array(y_list, dtype=np.float32)  # 连续 target
+groups = np.array(qid_list, dtype=np.int32)
+
+# ── 离散化: 每日组内按 target 排名 → 5级相关性 (XGBoost ranking 要求整数标签) ──
+y_discrete = np.zeros_like(y_raw, dtype=np.int32)
+for g in np.unique(groups):
+    mask = groups == g
+    n = mask.sum()
+    if n < 5:
+        continue
+    ranks = np.argsort(np.argsort(y_raw[mask]))  # 组内排名 0~(n-1)
+    # 分5级: 0=底20%,1=次20%,2=中20%,3=次高20%,4=顶20%
+    y_discrete[mask] = np.clip((ranks * 5 // n).astype(np.int32), 0, 4)
+
+y = y_discrete
+print(f"  {X.shape}, target范围: [{y_raw.min():.4f}, {y_raw.max():.4f}], "
+      f"均值={y_raw.mean():.4f}, 中位数={np.median(y_raw):.4f}, "
+      f"排名组: {len(np.unique(groups))}天, "
+      f"标签分布: {dict(zip(*np.unique(y, return_counts=True)))}")
 print(f"  耗时: {time.time()-t0:.0f}s")
 
-# ── 3. 训练 ──
-print(f"\n[3/4] 训练 XGBoost ({X.shape[1]}特征)...")
+# ── 3. Walk-Forward 训练 + 验证 ──
+print(f"\n[3/4] Walk-Forward 验证 XGBRanker ({X.shape[1]}特征)...")
 t0 = time.time()
-X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42)
-sw = (len(y_tr)-y_tr.sum())/max(y_tr.sum(),1)
-model = xgb.XGBClassifier(n_estimators=200,max_depth=6,learning_rate=0.05,
-    subsample=0.8,colsample_bytree=0.8,scale_pos_weight=sw,
-    objective='binary:logistic',eval_metric='auc',random_state=42,n_jobs=4)
-model.fit(X_tr, y_tr, eval_set=[(X_te, y_te)], verbose=False)
-auc = roc_auc_score(y_te, model.predict_proba(X_te)[:,1])
-print(f"  AUC-ROC: {auc:.4f} | Baseline=0.50 | 提升: {(auc-0.5)/0.5*100:+.0f}%")
+
+# 按 group 排序 (XGBRanker 要求)
+sort_idx = np.argsort(groups)
+X, y, y_raw, groups = X[sort_idx], y[sort_idx], y_raw[sort_idx], groups[sort_idx]
+
+# Walk-forward: 3个扩展窗口 (来源: Chan — 时间序列必须用walk-forward避免look-ahead)
+all_ic = []
+windows = [0.4, 0.6, 0.8]  # 训练占比
+last_split = 0
+final_model = None
+
+for wi, train_pct in enumerate(windows):
+    split = int(len(X) * train_pct)
+    while split < len(X) and groups[split] == groups[split-1]:
+        split += 1
+
+    X_tr, X_te = X[:split], X[split:]  # 扩展窗: 所有历史数据训练
+    y_tr, y_te = y[:split], y[split:]
+    y_raw_te = y_raw[split:]
+    grp_tr, grp_te = groups[:split], groups[split:]
+
+    if len(np.unique(grp_te)) < 3:
+        continue
+
+    n_days = len(np.unique(grp_te))
+    m = xgb.XGBRanker(
+        objective='rank:pairwise',
+        n_estimators=min(100 + wi*50, 200), max_depth=6, learning_rate=0.05,
+        subsample=0.8, colsample_bytree=0.8,
+        random_state=42, n_jobs=4,
+    )
+    m.fit(X_tr, y_tr, qid=grp_tr, verbose=False)
+    preds = m.predict(X_te)
+
+    # 每日 Rank IC
+    win_ic = []
+    for g in np.unique(grp_te):
+        mask = grp_te == g
+        if mask.sum() < 10:
+            continue
+        ic = np.corrcoef(preds[mask], y_raw_te[mask])[0, 1]
+        if not np.isnan(ic):
+            all_ic.append(ic)
+            win_ic.append(ic)
+
+    if wi == len(windows) - 1:
+        final_model = m
+
+    print(f"  窗{wi+1}({train_pct:.0%}训练→{n_days}天验证): "
+          f"IC={np.mean(win_ic):.4f}±{np.std(win_ic):.4f}, IC>0={np.mean(np.array(win_ic)>0)*100:.0f}%")
+
+mean_ic = np.mean(all_ic)
+print(f"\n[4/4] 评估 (Walk-Forward, {len(all_ic)}天验证)...")
+print(f"  Rank IC 均值: {mean_ic:.4f}  ({'✅' if mean_ic>0.03 else '⚠️' if mean_ic>0 else '❌'})")
+print(f"  Rank IC 标准差: {np.std(all_ic):.4f}")
+print(f"  IC > 0 占比: {np.mean(np.array(all_ic)>0)*100:.1f}%")
+print(f"  IC 衰减: 窗1→窗3 = 检查输出趋势")
 print(f"  耗时: {time.time()-t0:.0f}s")
 
-# ── 4. 评估 ──
-print(f"\n[4/4] 评估...")
-yp = model.predict(X_te)
-print(classification_report(y_te, yp, target_names=['未涨停','涨停'], zero_division=0))
+# 最终模型用全数据训练
+model = xgb.XGBRanker(
+    objective='rank:pairwise',
+    n_estimators=200, max_depth=6, learning_rate=0.05,
+    subsample=0.8, colsample_bytree=0.8,
+    random_state=42, n_jobs=4,
+)
+model.fit(X, y, qid=groups, verbose=False)
+
+# 特征重要性
 names = ['ret_1d','ret_5d','vol_ratio','vol_5d','gap','turnover','amt_log','hl_ratio','close_pos','ma_dev',
          'ksft','slope','ptc','vol_5min','max_ret','min_ret',
          'main_net_in','main_net_ratio','super_large_in','large_in',
          'lhb_net_buy','lhb_buy_ratio','lhb_count','lhb_exists',
-         'sector_limit_count','sector_rank']
-imp = sorted(zip(names[:X.shape[1]], model.feature_importances_), key=lambda x:-x[1])
+         'sector_limit_count','sector_rank',
+         'idx_20d_ret','idx_60d_vol','mkt_breadth']
+imp = sorted(zip(names[:X.shape[1]], model.feature_importances_), key=lambda x: -x[1])
 print("特征重要性 (Top 10):")
-for n,i in imp[:10]: print(f"  {n:<20} {i:.4f} {'█'*int(i*100)}")
+for n, i in imp[:10]:
+    print(f"  {n:<20} {i:.4f} {'█'*int(i*100)}")
 
-path = os.path.join(MODEL_DIR,'model.json')
+path = os.path.join(MODEL_DIR, 'model.json')
 model.save_model(path)
-print(f"\n✅ XGBoost: {path} | AUC={auc:.4f} {'✅' if auc>0.55 else '⚠️'}")
+print(f"\n✅ XGBRanker: {path} | Rank IC={mean_ic:.4f}")
 
-# ── 孤立森林 (无监督, 26维) ──
+# ── 孤立森林 ──
 t_if = time.time()
 if_model = IsolationForest(n_estimators=100, contamination=0.05, random_state=42, n_jobs=4)
-if_model.fit(X)
+if_model.fit(X[:500000])  # 内存限制, 取前50万样本
 if_path = os.path.join(MODEL_DIR, 'if_model.pkl')
-with open(if_path, 'wb') as f: pickle.dump(if_model, f)
-print(f"✅ IF: {if_path} | anomaly_ratio={float(np.mean(if_model.predict(X)==-1)):.2%} | {time.time()-t_if:.0f}s")
+with open(if_path, 'wb') as f:
+    pickle.dump(if_model, f)
+print(f"✅ IF: {if_path} | anomaly_ratio={float(np.mean(if_model.predict(X[:500000])==-1)):.2%} | {time.time()-t_if:.0f}s")
 
-print(f"\n📊 对比: POC(0.75)→V1(0.78)→V2({auc:.4f})")
+print(f"\n📊 对比: V2(分类 AUC=0.95)→V3(排序 Rank IC={mean_ic:.4f})")
