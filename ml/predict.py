@@ -51,7 +51,7 @@ n_feat = len(rows[0]) - 2
 for sym, rs in daily_data.items():
     rs_10 = rs[-10:] if len(rs) >= 10 else rs
     if len(rs_10) < 10: continue
-    closes = np.array([float(r[4]) for r in rs_10])
+    closes = np.array([float(r[5]) for r in rs_10])  # r[5]=close (r[4]是low)
     r = rs_10[-1]
     if closes[-2] <= 0: continue
     ret_1d = closes[-1]/closes[-2]-1
@@ -64,7 +64,7 @@ for sym, rs in daily_data.items():
     turnover = float(r[8]) if r[8] else float(r[5])/10000.0
     amt_log = np.log(max(float(r[6]),1))
     hl_ratio = float(r[3])/max(float(r[4]),0.01)-1
-    close_pos = (float(r[4])-float(r[2]))/(max(float(r[3])-float(r[4]),0.01)+0.001)
+    close_pos = (float(r[5])-float(r[2]))/(max(float(r[3])-float(r[4]),0.01)+0.001)  # (CLOSE-OPEN)/range
     ma20 = np.mean(closes[-21:-1]) if len(closes)>=21 else np.mean(closes)
     ma_dev = closes[-1]/ma20-1 if ma20>0 else 0
     base = [ret_1d,ret_5d,vol_ratio,vol_5d,gap,turnover,amt_log,hl_ratio,close_pos,ma_dev]

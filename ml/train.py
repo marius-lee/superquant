@@ -97,7 +97,7 @@ mkt_computed = True
 for sym, rs in daily_data.items():
     if sym.startswith('920'): continue  # 排除 BSE
     if len(rs) < 38: continue           # 需要未来5天数据
-    closes = np.array([float(r[4]) for r in rs])
+    closes = np.array([float(r[5]) for r in rs])  # r[5]=close (r[4]是low)
 
     for i in range(30, len(rs) - 6):    # 留6天做未来计算
         r = rs[i]
@@ -114,7 +114,7 @@ for sym, rs in daily_data.items():
         turnover = float(r[8]) if r[8] else float(r[5])/10000.0
         amt_log = np.log(max(float(r[6]),1))
         hl_ratio = float(r[3])/max(float(r[4]),0.01)-1
-        close_pos = (float(r[4])-float(r[2]))/(max(float(r[3])-float(r[4]),0.01)+0.001)
+        close_pos = (float(r[5])-float(r[2]))/(max(float(r[3])-float(r[4]),0.01)+0.001)  # (CLOSE-OPEN)/range
         ma20 = np.mean(closes[max(0,i-20):i+1])
         ma_dev = closes[i]/ma20-1 if ma20>0 else 0
         base = [ret_1d,ret_5d,vol_ratio,vol_5d,gap,turnover,amt_log,hl_ratio,close_pos,ma_dev]
