@@ -314,10 +314,10 @@ conn.close()
 wconn = sqlite3.connect(DB_PATH.replace("market.db", "trades.db"))
 wconn.execute("DELETE FROM candidates WHERE date=?", (today,))
 for i, (s, n, _, _, c) in enumerate(main_filtered):
-    wconn.execute("INSERT INTO candidates(date, symbol, name, prob, channel) VALUES(?,?,?,?,'main',?)",
-                  (today, s, n, round(float(c), 4), round(1.0/(1.0+_math.exp(-float(xgb_prob)/1.7)), 4)))
+    wconn.execute("INSERT INTO candidates(date, symbol, name, prob, channel) VALUES(?,?,?,?,'main')",
+                  (today, s, n, round(float(c), 4)))
 for s, n, _, _, c in disc_filtered:
     wconn.execute("INSERT INTO candidates(date, symbol, name, prob, channel) VALUES(?,?,?,?,'discovery')",
-                  (today, s, n, round(float(c), 4), round(1.0/(1.0+_math.exp(-float(xgb_prob)/1.7)), 4)))
+                  (today, s, n, round(float(c), 4)))
 wconn.commit(); wconn.close()
 print(f"\n✅ 候选已写入DB (主力{len(main_filtered)}只+探索{len(disc_filtered)}只)")

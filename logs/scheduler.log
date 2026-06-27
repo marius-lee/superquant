@@ -19,3 +19,29 @@ NameError: name 'date_str' is not defined
 [15:18:27] L3 回补...
   ✅ 8853s
 ⚠️ 盘后流程 1 步失败
+superquant 调度引擎 — 2026-06-27 08:45:05
+[08:45:05] 日线同步...
+  ✅ 1s
+[08:45:06] ML 预测...
+  ❌(1) 28s
+  [stderr] ers/mariusto/project/quant/.venv/lib/python3.14/site-packages/sklearn/base.py:525: InconsistentVersionWarning: Trying to unpickle estimator IsolationForest from version 1.8.0 when using version 1.9.0. This might lead to breaking code or invalid results. Use at your own risk. For more info please refer to:
+https://scikit-learn.org/stable/model_persistence.html#security-maintainability-limitations
+  warnings.warn(
+Traceback (most recent call last):
+  File "/Users/mariusto/project/superquant/ml/predict.py", line 317, in <module>
+    wconn.execute("INSERT INTO candidates(date, symbol, name, prob, channel) VALUES(?,?,?,?,'main',?)",
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                  (today, s, n, round(float(c), 4), round(1.0/(1.0+_math.exp(-float(xgb_prob)/1.7)), 4)))
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: 6 values for 5 columns
+  [stdout]      79%   1.7240    22.77
+195   000962     东方钽业         2.0248      77%   1.7188    84.02
+196   300721     怡达股份         2.0590      77%   1.7084    35.15
+197   301123     奕东电子         2.3994      80%   1.7041   128.99
+198   600584     长电科技         1.9144      76%   1.7020   104.17
+199   688248     南网科技         2.3375      80%   1.7015    65.31
+200   600708     光明地产         2.2467      79%   1.6991     3.64
+
+🔍 探索候选 Top 1 (IF高分+ML低分 → 潜在新模式):
+排名    股票         名称          XGBoost      异常度       综合
+⚠️ 盘前流程 1 步失败
