@@ -55,27 +55,28 @@ for sym, rs in daily_data.items():
     r = rs_10[-1]
     if closes[-2] <= 0: continue
     ret_1d = closes[-1]/closes[-2]-1
+    abs_ret_1d = abs(ret_1d)  # 来源: A股U型效应, 关注度代理
     ret_5d = closes[-1]/closes[-6]-1 if len(closes)>=2 and closes[-6]>0 else 0
-    vols_5 = np.array([float(rs_10[j][6]) for j in range(-5,0)])  # 索引6=成交量
+    vols_5 = np.array([float(rs_10[j][6]) for j in range(-5,0)])
     vol_ratio = float(r[6])/max(np.mean(vols_5),1)
     rets_5d = [(closes[j]/closes[j-1]-1) for j in range(-4,0) if closes[j-1]>0]
     vol_5d = np.std(rets_5d) if len(rets_5d)>2 else 0
     gap = float(r[2])/closes[-2]-1
     turnover = float(r[8]) if r[8] else float(r[5])/10000.0
-    amt_log = np.log(max(float(r[7]),1))  # r[7]=成交额, r[6]=成交量
+    amt_log = np.log(max(float(r[7]),1))
     hl_ratio = float(r[3])/max(float(r[4]),0.01)-1
-    close_pos = (float(r[5])-float(r[2]))/(max(float(r[3])-float(r[4]),0.01)+0.001)  # (CLOSE-OPEN)/range
+    close_pos = (float(r[5])-float(r[2]))/(max(float(r[3])-float(r[4]),0.01)+0.001)
     ma20 = np.mean(closes[-21:-1]) if len(closes)>=21 else np.mean(closes)
     ma_dev = closes[-1]/ma20-1 if ma20>0 else 0
-    base = [ret_1d,ret_5d,vol_ratio,vol_5d,gap,turnover,amt_log,hl_ratio,close_pos,ma_dev]
+    base = [ret_1d,abs_ret_1d,ret_5d,vol_ratio,vol_5d,gap,turnover,amt_log,hl_ratio,close_pos,ma_dev]
     extra = [float(r[i]) if r[i] is not None else 0.0 for i in range(9, len(r))]
     feat = base + extra
     # 补齐到模型期望的特征数
     while len(feat) < 26:
         feat.append(0.0)
-    while len(feat) < 29:
+    while len(feat) < 30:
         feat.append(0.0)
-    feat = feat[:29]
+    feat = feat[:30]
     # Layer 2: 市场状态特征 (暂填0, 下面统一计算后填入)
     feat = np.clip(feat, -10, 10)
     X_list.append(feat); symbols.append(sym)

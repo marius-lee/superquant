@@ -1,0 +1,4 @@
+  File "/Users/mariusto/project/superquant/trader/paper_trader.py", line 370
+    if ret_5d < -0.10  # 来源: 回测最优区间10-12%, 3d均值+0.46% 胜率54% and q.get('volume', 0) > 0:
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+SyntaxError: expected ':'

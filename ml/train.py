@@ -103,21 +103,22 @@ for sym, rs in daily_data.items():
         r = rs[i]
         if closes[i-1] <= 0: continue
 
-        # ── 日线特征 (10个) ──
+        # ── 日线特征 (11个, +abs_ret_1d关注度) ──
         ret_1d = closes[i]/closes[i-1]-1
+        abs_ret_1d = abs(ret_1d)  # 来源: A股U型效应 — 极端涨跌都有后续, 关注度代理
         ret_5d = closes[i]/closes[i-5]-1 if i>=5 and closes[i-5]>0 else 0
-        vols_5 = np.array([float(rs[j][6]) for j in range(i-4,i+1)])  # 索引6=成交量
+        vols_5 = np.array([float(rs[j][6]) for j in range(i-4,i+1)])
         vol_ratio = float(r[6])/max(np.mean(vols_5),1)
         rets_5d = [(closes[j]/closes[j-1]-1) for j in range(i-4,i+1) if closes[j-1]>0]
         vol_5d = np.std(rets_5d) if len(rets_5d)>2 else 0
         gap = float(r[2])/closes[i-1]-1
         turnover = float(r[8]) if r[8] else float(r[5])/10000.0
-        amt_log = np.log(max(float(r[7]),1))  # r[7]=成交额, r[6]=成交量
+        amt_log = np.log(max(float(r[7]),1))
         hl_ratio = float(r[3])/max(float(r[4]),0.01)-1
-        close_pos = (float(r[5])-float(r[2]))/(max(float(r[3])-float(r[4]),0.01)+0.001)  # (CLOSE-OPEN)/range
+        close_pos = (float(r[5])-float(r[2]))/(max(float(r[3])-float(r[4]),0.01)+0.001)
         ma20 = np.mean(closes[max(0,i-20):i+1])
         ma_dev = closes[i]/ma20-1 if ma20>0 else 0
-        base = [ret_1d,ret_5d,vol_ratio,vol_5d,gap,turnover,amt_log,hl_ratio,close_pos,ma_dev]
+        base = [ret_1d,abs_ret_1d,ret_5d,vol_ratio,vol_5d,gap,turnover,amt_log,hl_ratio,close_pos,ma_dev]
 
         # ── L2-L5特征 ──
         extra = []
@@ -130,9 +131,9 @@ for sym, rs in daily_data.items():
         feat = base + extra
         # Layer 2: 市场状态特征 (idx_20d_ret, idx_60d_vol, mkt_breadth)
         feat += [0.0, 0.0, 0.0]
-        if len(feat) < 29:
-            feat += [0.0] * (29 - len(feat))
-        feat = feat[:29]
+        if len(feat) < 30:
+            feat += [0.0] * (30 - len(feat))
+        feat = feat[:30]
         date_str = r[1]  # date 字段 — 提前定义, Layer 2 需要
         if date_str in mkt_features:
             feat[-3:] = mkt_features[date_str]
@@ -255,7 +256,7 @@ model = xgb.XGBRanker(
 model.fit(X, y, qid=groups, verbose=False)
 
 # 特征重要性
-names = ['ret_1d','ret_5d','vol_ratio','vol_5d','gap','turnover','amt_log','hl_ratio','close_pos','ma_dev',
+names = ['ret_1d','abs_ret_1d','ret_5d','vol_ratio','vol_5d','gap','turnover','amt_log','hl_ratio','close_pos','ma_dev',
          'ksft','slope','ptc','vol_5min','max_ret','min_ret',
          'main_net_in','main_net_ratio','super_large_in','large_in',
          'lhb_net_buy','lhb_buy_ratio','lhb_count','lhb_exists',
