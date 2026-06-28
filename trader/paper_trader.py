@@ -367,7 +367,8 @@ def _run_scan_impl(conn, capital, positions, tracked, history_cache, trade_log, 
         # 近5日累计跌幅>8% + 今日放量 → 超跌反弹
         if len(prices) >= 6:
             ret_5d = (prices[-1] / prices[-6] - 1) if prices[-6] > 0 else 0
-            if ret_5d < -0.10  # 来源: 回测最优区间10-12%, 3d均值+0.46% 胜率54% and q.get('volume', 0) > 0:
+            # 来源: 回测最优区间10-12%, 3d均值+0.46% 胜率54%
+            if ret_5d < -0.10 and q.get('volume', 0) > 0:
                 signals_fired.append(('E', sw.get('E', 0.33)))
 
         if signals_fired:
