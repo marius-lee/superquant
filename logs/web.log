@@ -16,5 +16,14 @@ superquant Web
 ==================================================
  * Debugger is active!
  * Debugger PIN: 610-832-373
-127.0.0.1 - - [28/Jun/2026 20:35:11] "GET /api/state HTTP/1.1" 200 -
-127.0.0.1 - - [28/Jun/2026 20:35:26] "GET /api/positions HTTP/1.1" 200 -
+127.0.0.1 - - [28/Jun/2026 20:37:50] "GET /api/state HTTP/1.1" 200 -
+127.0.0.1 - - [28/Jun/2026 20:37:55] "GET /api/signals HTTP/1.1" 200 -
+127.0.0.1 - - [28/Jun/2026 20:37:55] "GET /api/candidates HTTP/1.1" 200 -
+127.0.0.1 - - [28/Jun/2026 20:37:55] "GET /api/rejected HTTP/1.1" 200 -
+127.0.0.1 - - [28/Jun/2026 20:37:55] "GET /api/signal-stats HTTP/1.1" 200 -
+127.0.0.1 - - [28/Jun/2026 20:37:55] "GET /api/trades HTTP/1.1" 200 -
+127.0.0.1 - - [28/Jun/2026 20:37:55] "GET /api/metrics HTTP/1.1" 200 -
+127.0.0.1 - - [28/Jun/2026 20:37:56] "GET /api/l3-progress HTTP/1.1" 200 -
+127.0.0.1 - - [28/Jun/2026 20:37:56] "GET /api/northstar HTTP/1.1" 200 -
+127.0.0.1 - - [28/Jun/2026 20:37:56] "GET /api/positions HTTP/1.1" 200 -
+127.0.0.1 - - [28/Jun/2026 20:37:56] "GET /api/state HTTP/1.1" 200 -

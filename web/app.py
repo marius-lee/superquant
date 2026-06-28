@@ -9,7 +9,7 @@ QUANT_ROOT = os.path.expanduser("~/project/quant")
 sys.path.insert(0, SUPERQUANT_ROOT)
 sys.path.insert(0, QUANT_ROOT)
 
-from engine.config import get_capital
+from engine.config import DEFAULT_CAPITAL
 
 TRADE_DB = os.path.join(QUANT_ROOT, "data", "trades.db")
 MKT_DB = os.path.join(QUANT_ROOT, "data", "market.db")
@@ -54,12 +54,12 @@ def _account():
             row = c.execute("SELECT capital_after FROM sim_trades WHERE capital_after IS NOT NULL ORDER BY id DESC LIMIT 1").fetchone()
             pos = c.execute("SELECT symbol, SUM(shares) FROM sim_trades WHERE side='buy' AND date=? AND symbol NOT IN (SELECT symbol FROM sim_trades WHERE side='sell' AND date=?) GROUP BY symbol", (td,td)).fetchall()
             c.close()
-            cash = row[0] if row else get_capital(); pv = 0
+            cash = row[0] if row else DEFAULT_CAPITAL; pv = 0
             if pos:
                 qs = _quotes([r[0] for r in pos])
                 for sym, sh in pos: pv += sh * qs.get(sym,{}).get('price',0)
             return {'cash': round(cash,2), 'equity': round(cash+pv,2), 'date': td, 'n_positions': len(pos)}
-        except: return {'cash': get_capital(), 'equity': get_capital(), 'date': date.today().isoformat(), 'n_positions': 0}
+        except: return {'cash': DEFAULT_CAPITAL, 'equity': DEFAULT_CAPITAL, 'date': date.today().isoformat(), 'n_positions': 0}
     return _cached('acct', 2, calc)
 
 def _perf():
@@ -178,7 +178,7 @@ def index(): return render_template('index.html')
 def api_state():
     acct = _account(); cands = _candidates()
     return jsonify({'cash':acct['cash'],'equity':acct['equity'],'date':acct['date'],'n_positions':acct['n_positions'],
-                    'initial_capital':get_capital(),'ml_candidates':len(cands.get('main',[])),'ml_date':cands.get('date',''),
+                    'initial_capital':DEFAULT_CAPITAL,'ml_candidates':len(cands.get('main',[])),'ml_date':cands.get('date',''),
                     'performance':_perf(),'regime':_regime()})
 
 @app.route('/api/candidates')
@@ -189,7 +189,7 @@ def api_l3_progress(): return jsonify(_l3())
 
 @app.route('/api/northstar')
 def api_northstar():
-    acct = _account(); eq = acct['equity']; init = get_capital(); tgt = 1_000_000
+    acct = _account(); eq = acct['equity']; init = DEFAULT_CAPITAL; tgt = 1_000_000
     earned = eq - init; need = tgt - init; prog = (earned/need*100) if need>0 else 0
     return jsonify({'initial':init,'current':eq,'target':tgt,'progress_pct':round(prog,4),
                     'daily_target_pct':2.1,'remaining':round(tgt-eq,0),
