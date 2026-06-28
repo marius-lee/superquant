@@ -546,6 +546,11 @@ def main():
     parser.add_argument('--interval', type=int, default=5, help='扫描间隔(秒, 默认5s)')
     ARGS = parser.parse_args()
 
+    # 交易日检查 — 周末/节假日不启动
+    if datetime.now().weekday() >= 5:
+        print(f"  非交易日 (weekday={datetime.now().weekday()}), 退出")
+        return 0
+
     initial_capital = get_capital()
     print("=" * 60)
     print("superquant 模拟交易 (ML驱动)")

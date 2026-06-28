@@ -206,6 +206,9 @@ if __name__ == '__main__':
     ARGS = parser.parse_args()
 
     now = datetime.now()
+    if now.weekday() >= 5:
+        print(f"非交易日 (weekday={now.weekday()}), 退出")
+        exit(0)
     print(f"superquant 调度引擎 — {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
     if ARGS.mode == 'pre-market':
