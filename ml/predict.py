@@ -171,10 +171,13 @@ is_bear = False
 if len(idx_row) >= 20:
     idx_ret20 = (idx_row[0][0] / idx_row[-1][0] - 1)
     is_bear = idx_ret20 < -0.05
-# Bear市场: 高波动组 Q4/Q5 降权 0.7
+# Bear阶梯降权: Q4×0.4, Q3×0.6, Q2×0.8, Q1×1.1, Q0×1.5
 if is_bear:
-    hi_vol_mask = vol_groups >= 3
-    preds_vol_neutral[hi_vol_mask] *= 0.7
+    bear_weights = {4: 0.4, 3: 0.6, 2: 0.8, 1: 1.1, 0: 1.5}
+    for g, w in bear_weights.items():
+        mask = vol_groups == g
+        if mask.sum() > 0:
+            preds_vol_neutral[mask] *= w
 # 重新z-score
 vn_mean, vn_std = np.mean(preds_vol_neutral), np.std(preds_vol_neutral)
 preds = (preds_vol_neutral - vn_mean) / (vn_std + 1e-10)
